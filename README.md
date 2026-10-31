@@ -196,10 +196,10 @@ in the publishing path, not in the test.
 ## Limitations
 
 * **The camera must already be publishing.** See "What is and is not proven".
-* **One viewer per camera.** KVS allows a single master and this relay is a
-  viewer, but the camera only accepts a limited number of viewers; keeping the
-  relay enrolled on a camera you are also watching in the app is what the account
-  is actually sized for.
+* **Shared with the app.** KVS allows one master per channel — the camera — and
+  any number of viewers, but a camera's uplink and viewer slots are finite. The
+  relay is another viewer alongside your phone, so expect contention if you
+  watch the same camera in the app while it is enrolled here.
 * **Video only, H.264 only.** No audio, no re-encode.
 * **Credentials expire in about five minutes**, so they are fetched per attempt
   rather than cached; an established WebRTC session survives past that.
