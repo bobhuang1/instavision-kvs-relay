@@ -1,0 +1,64 @@
+# =============================================================================
+# MediaMTX for the InstaVision relay - separate instance from the OSAIO one
+#
+# The relay publishes to this server over RTSP with `-c copy` (no transcode);
+# Frigate's go2rtc then reads the same RTSP paths like any other camera.
+#
+# Ports are moved off BOTH other RTSP servers on this host, because all three run
+# with network_mode: host:
+#
+#     Frigate go2rtc   8554/tcp, 8555/udp
+#     OSAIO MediaMTX   8564/tcp, 8000-8001/udp, 8898, 8899
+#     this one         8574/tcp, 8100-8101/udp, 8908, 8909
+#
+# Publishing is localhost-only: the relay runs on this host. Reading (RTSP/HLS)
+# is open to the LAN so Frigate, Home Assistant and a phone on the sofa can all
+# pull a stream.
+# =============================================================================
+logLevel: info
+logDestinations: [stdout]
+
+authMethod: internal
+authInternalUsers:
+  - user: any
+    pass:
+    ips: ['127.0.0.1', '::1']
+    permissions:
+      - action: publish
+      - action: read
+      - action: playback
+      - action: api
+      - action: metrics
+  - user: any
+    pass:
+    ips: []
+    permissions:
+      - action: read
+      - action: playback
+
+api: yes
+apiAddress: 127.0.0.1:9998
+
+rtsp: yes
+rtspAddress: :8574
+protocols: [tcp, udp]
+rtpAddress: :8100
+rtcpAddress: :8101
+
+rtmp: no
+srt: no
+
+hls: yes
+hlsAddress: :8908
+hlsAlwaysRemux: yes
+hlsVariant: mpegts
+hlsSegmentCount: 7
+hlsSegmentDuration: 1s
+
+webrtc: yes
+webrtcAddress: :8909
+webrtcLocalUDPAddress: :8190
+
+# Paths are created on first publish by the relay, so nothing is declared here.
+paths:
+  all_others:

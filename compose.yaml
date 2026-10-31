@@ -1,0 +1,73 @@
+# =============================================================================
+# InstaVision-app cameras -> RTSP for Frigate
+#
+# The InstaVision cameras (ai.instaview.guardian) are WebRTC viewers' peers on
+# AWS Kinesis Video Streams channels. Nothing local is exposed: measured on
+# 2026-10-31, every port is closed on all twelve (80/443/554/5000/8000/8080/
+# 8888/34567) and the seven that answer ping share a single OUI (8c:5c:53). So
+# - exactly like the OSAIO group - a relay is the only way in, and this one is
+# ours rather than a vendor image: relay.py does the vendor login, joins each
+# camera's KVS channel as a viewer, and copies the H.264 straight into ffmpeg
+# which republishes to MediaMTX with `-c copy`. No decode, no transcode.
+#
+# Separate compose project from ./compose.yaml and ./osaio/compose.yaml so any
+# one of the three can be restarted, updated or dropped alone. Both services run
+# network_mode: host because camera WebRTC media arrives on random UDP ports and
+# Frigate reads RTSP from the LAN.
+#
+# restart: always, for the same measured reason as the OSAIO stack - it brings
+# the stack back after a power cut even if it was stopped by hand beforehand.
+#
+# NOTHING IS PUBLISHED UNTIL A CAMERA IS ENROLLED. INSTAVISION_ENROLLED is the
+# allowlist; while it is empty the relay logs that and publishes nothing, so a
+# camera cannot quietly start using the uplink.
+#
+# An enrolled camera is only captured while it is itself uploading to its KVS
+# channel. See README "What is and is not proven": the vendor API has no call
+# that starts a stream, so the relay waits for the camera rather than waking it.
+# =============================================================================
+name: instavision
+
+services:
+  mediamtx:
+    image: bluenviron/mediamtx:1.9.3@sha256:e3e9cd157344567a1a67f6c6606dcc7772b4ff589c23131832ffba3f92b97ca6
+    restart: always
+    network_mode: host
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro
+
+  relay:
+    build: .
+    restart: always
+    network_mode: host
+    environment:
+      # Read by probe.py / kvs_viewer.py, which the relay imports.
+      INSTAVISION_EMAIL: ${INSTAVISION_EMAIL:-}
+      INSTAVISION_PASSWORD: ${INSTAVISION_PASSWORD:-}
+      INSTAVISION_PARTNER: ${INSTAVISION_PARTNER:-instaview}
+      INSTAVISION_CLIENT_ID: ${INSTAVISION_CLIENT_ID:-home-user-portal}
+      INSTAVISION_API: ${INSTAVISION_API:-https://api-us.instavision.ai/}
+      INSTAVISION_FIREBASE_KEY: ${INSTAVISION_FIREBASE_KEY:-}
+      INSTAVISION_KVS_REGION: ${INSTAVISION_KVS_REGION:-us-west-2}
+      # Allowlist of camera names. Empty = publish nothing.
+      INSTAVISION_ENROLLED: ${INSTAVISION_ENROLLED:-}
+      # MediaMTX runs in its own container above; publishing is localhost-only.
+      INSTAVISION_RTSP_BASE: rtsp://127.0.0.1:8574
+      INSTAVISION_SESSION_SECONDS: ${INSTAVISION_SESSION_SECONDS:-3600}
+      INSTAVISION_ANSWER_TIMEOUT: ${INSTAVISION_ANSWER_TIMEOUT:-25}
+      INSTAVISION_HTTP_BIND: 0.0.0.0
+      INSTAVISION_HTTP_PORT: ${INSTAVISION_HTTP_PORT:-8655}
+      FFMPEG_PATH: /usr/bin/ffmpeg
+    volumes:
+      - ./state:/app/state
+    depends_on:
+      mediamtx:
+        condition: service_started
+    healthcheck:
+      # 503 from / means "running but not every enrolled camera is streaming",
+      # which is exactly what a health check should not treat as healthy.
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:${INSTAVISION_HTTP_PORT:-8655}/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s

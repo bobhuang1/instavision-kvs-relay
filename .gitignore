@@ -1,0 +1,16 @@
+# Secrets - the relay signs in to a real account with these
+.env
+
+# Runtime state (status logs, captured frames, session data)
+state/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
