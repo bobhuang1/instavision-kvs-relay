@@ -459,9 +459,19 @@ async def list_devices() -> int:
     for d in devices or []:
         state = d.get("device_state") or {}
         ip = state.get("ip_addr") or "-"
-        alive = subprocess.run(["ping", "-c", "1", "-W", "1", ip],
-                               capture_output=True).returncode == 0 if ip != "-" else False
-        print(f"{d['name']:10} {ip:16} {'up' if alive else 'down':8} "
+        # `ping` is only here to make the table readable; a slim image or a host
+        # without it must still be able to list the account's cameras.
+        alive = None
+        if ip != "-":
+            try:
+                alive = subprocess.run(
+                    ["ping", "-c", "1", "-W", "1", ip],
+                    capture_output=True, timeout=5,
+                ).returncode == 0
+            except (OSError, subprocess.SubprocessError):
+                alive = None
+        status = "?" if alive is None else ("up" if alive else "down")
+        print(f"{d['name']:10} {ip:16} {status:8} "
               f"{slugify(d['name']):22} {d['id']}")
     return 0
 
