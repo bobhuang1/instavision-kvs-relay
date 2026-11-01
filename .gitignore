@@ -4,6 +4,9 @@
 # Runtime state (status logs, captured frames, session data)
 state/
 
+# Load-test output
+loadtest.json
+
 # Python
 __pycache__/
 *.py[cod]

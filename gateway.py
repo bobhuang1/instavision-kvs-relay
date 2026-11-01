@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
-"""InstaVision gateway: the OSAIO relay's surface, mapped onto InstaVision.
+"""InstaVision-Relay web app: one page to run and watch the relay.
 
-Same shape as BombeCam (the OSAIO gateway): a sign-in screen with a first-run
+The relay itself (relay.py) only speaks RTSP to MediaMTX. This process wraps it
+in the things a person actually needs: a sign-in screen with a first-run
 administrator, tabs for Viewer / Cameras / Streams & ports / Settings, live tiles
 with PTZ, zoom, mute and fullscreen, camera add/remove, and copyable Frigate YAML.
-What differs is only what the vendor allows:
 
-    Viewer      MediaMTX WHEP played inline in the tile, with the camera's snapshot
-                shown while it is not publishing (BombeCam always has media)
-    Cameras     cameras come from the InstaVision account; "add" enrolls a camera
-                in the relay rather than pairing it
-    No firewall OSAIO's cloud-blocking tab needs router access and an OSAIO server
-                key; InstaVision has neither, so that tab is not pretended
+The three tabs exist because of three real constraints of these cameras:
+
+    Viewer      MediaMTX WHEP played inline in the tile, with the camera's
+                snapshot shown while it is not publishing - which is most of the
+                time, so a tile that only spoke WebRTC would sit black
+    Cameras     cameras come from the account; "add" enrolls a camera in the
+                relay rather than pairing it, because there is nothing local to
+                pair with
+    No firewall There is no router integration and no vendor server key to
+                manage here, so no tab is invented for them
 
 Routes:
 
@@ -394,7 +398,7 @@ def enrolled_names(cams: Cameras) -> list[str]:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "instavision-gateway"
+    server_version = "instavision-relay"
     auth = Auth()
     cameras = Cameras()
     relay = RelayManager()

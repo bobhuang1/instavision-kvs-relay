@@ -1,14 +1,14 @@
 # =============================================================================
-# MediaMTX for the InstaVision relay - separate instance from the OSAIO one
+# MediaMTX for InstaVision-Relay - its own instance, on its own ports
 #
 # The relay publishes to this server over RTSP with `-c copy` (no transcode);
 # Frigate's go2rtc then reads the same RTSP paths like any other camera.
 #
-# Ports are moved off BOTH other RTSP servers on this host, because all three run
-# with network_mode: host:
+# The ports are moved off every other RTSP server on this host, because they all
+# run with network_mode: host:
 #
 #     Frigate go2rtc   8554/tcp, 8555/udp
-#     OSAIO MediaMTX   8564/tcp, 8000-8001/udp, 8898, 8899
+#     the other bridge 8564/tcp, 8000-8001/udp, 8898, 8899
 #     this one         8574/tcp, 8100-8101/udp, 8908, 8909
 #
 # Publishing is localhost-only: the relay runs on this host. Reading (RTSP/HLS)

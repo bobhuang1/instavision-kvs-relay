@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""InstaVision -> RTSP relay for Frigate.
+"""InstaVision-Relay: vendor cameras -> RTSP for Frigate.
 
-The InstaVision cameras are WebRTC viewers' endpoints on AWS Kinesis Video
-Streams channels; they expose nothing local (every port closed, same OUI, no
-RTSP/ONVIF), so - like the OSAIO group - the only way into Frigate is to act as
-a viewer and republish.
+The cameras are WebRTC viewers' endpoints on AWS Kinesis Video Streams channels;
+they expose nothing local (every port closed, same OUI, no RTSP/ONVIF), so the
+only way into Frigate is to be the viewer they expect and republish what they
+send.
 
 What this does, per enrolled camera:
 

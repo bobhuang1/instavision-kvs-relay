@@ -1,9 +1,14 @@
-# instavision-kvs-relay
+# InstaVision-Relay
 
 Watch **InstaVision** (`ai.instaview.guardian`) Wi-Fi cameras through their AWS
 Kinesis Video Streams WebRTC channels and republish them as plain **RTSP**, so
 Frigate, Home Assistant, VLC or any other NVR can consume them like an ordinary
 camera.
+
+Two pieces: **relay.py** does the vendor session and the KVS viewer, and
+**gateway.py** puts a small web app in front of it (viewer, enrollment, PTZ,
+snapshots, copyable Frigate YAML). One compose project starts MediaMTX and the
+gateway.
 
 These cameras expose nothing on the LAN — measured on twelve of them: every port
 closed on 80/443/554/5000/8000/8080/8888/34567, and the seven that answer ping
@@ -104,9 +109,8 @@ because its job is to be watching when a camera starts streaming.
 
 ## The gateway
 
-This is the same application shape as the OSAIO relay's BombeCam gateway, mapped onto
-what InstaVision allows: one administrator, four tabs, live tiles, and the vendor's
-own PTZ.
+The app is what makes the relay usable without a terminal: one administrator, four
+tabs, live tiles, and the vendor's own PTZ.
 
 | Tab | What it does |
 | --- | --- |
@@ -151,9 +155,9 @@ and every camera advertises a `0xFC12 PTZ` cluster with pan and tilt in the rang
 `snapshot` when all it has is a still from the camera's own upload (minutes old), and
 `offline` when the camera reports no address. It never calls a still live.
 
-**Not ported.** BombeCam also has an Osaio server key / app ID, router-based cloud
-blocking and two-step sign-in. InstaVision has no equivalent of the first two, so
-this deliberately does not invent them; two-step sign-in is not implemented.
+**Deliberately absent.** There is no router or firewall control and no vendor
+server key to manage here, so no tab pretends to offer them; two-step sign-in is
+not implemented either.
 
 ## Adding a camera to Frigate
 
@@ -182,14 +186,14 @@ and re-encapsulating it is one more thing to go wrong.
 
 ## Ports
 
-All three relays on a typical NVR host run with `network_mode: host`, so the ports
-are chosen not to collide:
+Every service on an NVR host tends to run with `network_mode: host`, so these ports
+are chosen not to collide with anything else on the box:
 
 | Service | RTSP | API | HLS | WebRTC |
 | --- | --- | --- | --- | --- |
 | Frigate's go2rtc | 8554/tcp | — | 1984 | 8555/udp |
-| OSAIO relay (MediaMTX) | 8564/tcp | 9997 | 8898 | 8899 |
-| **this relay (MediaMTX)** | **8574/tcp** | **9998** | **8908** | **8909** |
+| another camera bridge (MediaMTX) | 8564/tcp | 9997 | 8898 | 8899 |
+| **InstaVision-Relay (MediaMTX)** | **8574/tcp** | **9998** | **8908** | **8909** |
 
 The gateway's own pages sit on **8665** (UI + API), with the relay's health listener
 on **8656** so a watchdog can watch the relay alone.
@@ -255,6 +259,76 @@ Note the ~5 s: ffmpeg probes up to five seconds of input before it writes the RT
 header, so a path appears about five seconds after a feed starts. That delay is
 in the publishing path, not in the test.
 
+## Load test
+
+How much does one more camera cost? That depends on three layers, and they are
+paid for separately:
+
+| Layer | Where | Measured by |
+| --- | --- | --- |
+| **receive** | camera → KVS WebRTC → `aiortc` depayload | the gateway process, only with a camera that publishes |
+| **publish** | H.264 access units → `ffmpeg -c copy` → MediaMTX | [`loadtest.py`](loadtest.py) |
+| **fan-out** | MediaMTX path → one RTSP reader each (go2rtc, Frigate) | [`loadtest.py`](loadtest.py) |
+
+```bash
+python3 loadtest.py                         # 5, 8 and 12 synthetic streams
+python3 loadtest.py 6 12 --seconds 60       # chosen concurrency levels
+python3 loadtest.py --clip garage.mp4 4     # a real recording, same harness
+python3 loadtest.py --real --seconds 120    # live cameras, publishes nothing
+```
+
+By default it publishes a generated clip through the relay's own `RtspPublisher`
+and attaches an ffmpeg reader to each path, so what is measured is the code that
+runs in production, not a model of it. `--real` skips publishing entirely: it
+finds the `insta_*` paths MediaMTX is carrying right now, attaches
+`--readers` (default 1) consumers to each, and reports what the actual cameras
+cost — useful because bitrate, frame size and GOP structure all change the copy
+and fan-out cost.
+
+`--clip` accepts a raw Annex-B `.h264` or anything ffmpeg can open; containers are
+remuxed once with `-c copy` (never re-encoded), so a recorded clip from one of
+your own cameras is the cheapest honest test there is. Settings that are not
+flags live in the environment: `INSTAVISION_LOADTEST_SIZE` (default `1280x720`),
+`INSTAVISION_LOADTEST_FPS` (15), `INSTAVISION_LOADTEST_CLIP_SECONDS` (6),
+`INSTAVISION_MEDIAMTX_API` (the path API), `INSTAVISION_RELAY_STATUS`, and
+`INSTAVISION_FRIGATE_API` (optional — when reachable, Frigate's detector latency
+and iGPU figures are sampled before and after each phase).
+
+Results are printed as one JSON line per phase, a table at the end, and written to
+`loadtest.json`. Exit codes: `0` measured, `2` nothing to measure (no live path in
+`--real`), `3` MediaMTX's API unreachable.
+
+On the four-core N95 this project was built on, with Frigate already running (so
+the baseline is the *machine*, not the relay):
+
+| Streams | system CPU | publisher | consumers | per stream | Mbit/s in | RSS |
+| --- | --- | --- | --- | --- | --- | --- |
+| baseline | 85.5% | — | — | — | — | — |
+| 5 | 86.2% | 3.5% | 4.0% | **1.50%** | 21.7 | 537 MB |
+| 8 | 85.7% | 5.4% | 6.1% | **1.44%** | 34.6 | 858 MB |
+| 12 | 92.4% | 7.1% | 8.3% | **1.28%** | 51.2 | 1288 MB |
+
+Cost per stream is flat, and the memory is almost entirely ffmpeg (`~107 MB` per
+stream pair) rather than the relay, so the ceiling here is the fan-out readers, not
+the copy. Frigate's detector latency stayed between 37 and 40 ms across the sweep
+with zero dropped frames.
+
+Two caveats on the absolute numbers. The generated clip runs at **4.3 Mbit/s per
+camera**, which is a deliberate worst case — a recording from one of the real
+1080p cameras here measures 2.1 Mbit/s — so the per-stream CPU is an upper bound.
+And the baseline is 85%, not 2%, because this box was already running Frigate,
+Home Assistant, Ollama, SQL Server and Postgres; what transfers to another machine
+is the *increment*.
+Use `--clip` with one of your own recordings when the figure has to be exact.
+
+The one number this harness cannot produce is the receive layer: with no camera
+publishing, `aiortc` never runs. `--real` closes that gap on a live system — it
+accounts the gateway's CPU (found by scanning `/proc`, or `--pid` if the container
+is not visible) alongside the readers, so the per-camera relay cost appears there.
+That mode is **written but unproven**: no camera on the test account has ever
+published, so it could only be checked against its no-live-camera path, which
+fails with a clear message and exit code 2 rather than inventing a number.
+
 ## Diagnostics
 
 | File | What it does |
@@ -263,6 +337,7 @@ in the publishing path, not in the test.
 | [`kvs_viewer.py`](kvs_viewer.py) | The KVS WebRTC viewer on its own: `--device Cam3 --seconds 20`, `--all` to sweep every camera, `--save frame.jpg` to keep the first frame. |
 | [`mqtt_probe.py`](mqtt_probe.py) | Tries the app's AWS IoT MQTT control channel and reports exactly how it is refused. |
 | [`selftest.py`](selftest.py) | The republish round trip described above. |
+| [`loadtest.py`](loadtest.py) | Concurrency harness: cost per stream for publishing and fan-out, synthetic or against live cameras. See "Load test". |
 | [`gateway.py`](gateway.py) | The app: sessions, enrollment, snapshots, PTZ, WHEP proxy; runs the relay in-process. |
 | [`ui.html`](ui.html) | The tabbed page — plain HTML/CSS/JS, no build step. |
 | [`login.html`](login.html) | Sign-in and first-run administrator. |

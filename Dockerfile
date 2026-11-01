@@ -1,4 +1,4 @@
-# InstaVision relay image.
+# InstaVision-Relay image.
 #
 # The only system dependency is ffmpeg: the relay copies H.264 access units into
 # it as Annex-B on stdin and ffmpeg does the RTSP handshake and RTP packetisation

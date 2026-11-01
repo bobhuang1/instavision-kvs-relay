@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>InstaVision · sign in</title>
+<title>InstaVision-Relay · sign in</title>
 <style>
   :root { --bg:#0f1115; --panel:#171a21; --line:#262b36; --text:#e6e9ef;
           --dim:#8b93a3; --bad:#e05c5c; --ok:#35c46b; --accent:#4c8dff; }
@@ -35,9 +35,9 @@
 </head>
 <body>
 <form class="card" id="form" autocomplete="on">
-  <div class="brand"><span class="dot"></span><h1>InstaVision</h1></div>
+  <div class="brand"><span class="dot"></span><h1>InstaVision-Relay</h1></div>
   <h2 id="title">Sign in</h2>
-  <p class="sub" id="subtitle">InstaVision cameras, relayed to RTSP.</p>
+  <p class="sub" id="subtitle">Vendor cameras, relayed to RTSP.</p>
 
   <label for="username">Username</label>
   <input id="username" name="username" autocomplete="username" value="admin">
@@ -53,7 +53,7 @@
   <button id="submit" type="submit">Sign in</button>
   <div class="msg" id="msg"></div>
   <div class="hint" id="stored-hint"></div>
-  <div class="foot">Same sign-in model as the OSAIO relay: one administrator, one password.</div>
+  <div class="foot">One administrator, one password. The relay holds the camera account, so this page is the only door.</div>
 </form>
 
 <script>

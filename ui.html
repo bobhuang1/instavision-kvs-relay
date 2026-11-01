@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>InstaVision</title>
+<title>InstaVision-Relay</title>
 <style>
   :root { --bg:#0f1115; --panel:#171a21; --panel2:#12151b; --line:#262b36; --text:#e6e9ef;
           --dim:#8b93a3; --ok:#35c46b; --warn:#e0a53c; --bad:#e05c5c; --accent:#4c8dff; }
@@ -82,7 +82,7 @@
 </head>
 <body>
 <header>
-  <span class="brand"><span class="dot"></span>InstaVision</span>
+  <span class="brand"><span class="dot"></span>InstaVision-Relay</span>
   <nav>
     <button data-tab="viewer" class="on">📹 Viewer</button>
     <button data-tab="cameras">📷 Cameras</button>
@@ -145,7 +145,7 @@
   <section id="settings">
     <div class="panel">
       <h3>Sign-in</h3>
-      <p>One administrator, as the OSAIO relay has.</p>
+      <p>One administrator for this relay: the sign-in protects the streams, PTZ and the account session.</p>
       <div class="field"><label for="cur">Current password</label>
         <input id="cur" type="password" autocomplete="current-password"></div>
       <div class="field"><label for="next">New password</label>
@@ -365,7 +365,7 @@ function renderCameras() {
         cam.state === "live" ? "live" : (cam.enrolled ? "waiting" : "off")}</span></td>
       <td style="text-align:right">
         <button class="${cam.enrolled ? "danger" : "primary"}">
-          ${cam.enrolled ? "Remove" : "Add to InstaVision"}
+          ${cam.enrolled ? "Remove" : "Add to relay"}
         </button></td>`;
     tr.querySelector("button").onclick = async (ev) => {
       const button = ev.currentTarget;

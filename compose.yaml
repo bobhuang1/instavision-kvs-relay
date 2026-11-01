@@ -1,22 +1,21 @@
 # =============================================================================
-# InstaVision-app cameras -> RTSP for Frigate
+# InstaVision-Relay - vendor cameras -> RTSP for Frigate
 #
-# The InstaVision cameras (ai.instaview.guardian) are WebRTC viewers' peers on
-# AWS Kinesis Video Streams channels. Nothing local is exposed: measured on
+# The cameras (app: ai.instaview.guardian) are WebRTC viewers' peers on AWS
+# Kinesis Video Streams channels. Nothing local is exposed: measured on
 # 2026-10-31, every port is closed on all twelve (80/443/554/5000/8000/8080/
-# 8888/34567) and the seven that answer ping share a single OUI (8c:5c:53). So
-# - exactly like the OSAIO group - a relay is the only way in, and this one is
-# ours rather than a vendor image: relay.py does the vendor login, joins each
-# camera's KVS channel as a viewer, and copies the H.264 straight into ffmpeg
-# which republishes to MediaMTX with `-c copy`. No decode, no transcode.
+# 8888/34567) and the seven that answer ping share a single OUI (8c:5c:53). A
+# relay is therefore the only way in: relay.py does the account login, joins
+# each camera's KVS channel as a viewer, and copies the H.264 straight into
+# ffmpeg which republishes to MediaMTX with `-c copy`. No decode, no transcode.
 #
-# Separate compose project from ./compose.yaml and ./osaio/compose.yaml so any
-# one of the three can be restarted, updated or dropped alone. Both services run
-# network_mode: host because camera WebRTC media arrives on random UDP ports and
-# Frigate reads RTSP from the LAN.
+# Its own compose project so this stack can be restarted, updated or dropped
+# without touching Frigate, Home Assistant or the other camera bridges. Both
+# services run network_mode: host because camera WebRTC media arrives on random
+# UDP ports and Frigate reads RTSP from the LAN.
 #
-# restart: always, for the same measured reason as the OSAIO stack - it brings
-# the stack back after a power cut even if it was stopped by hand beforehand.
+# restart: always, so the stack comes back after a power cut even if it was
+# stopped by hand beforehand.
 #
 # NOTHING IS PUBLISHED UNTIL A CAMERA IS ENROLLED. INSTAVISION_ENROLLED is the
 # allowlist; while it is empty the relay logs that and publishes nothing, so a
@@ -24,7 +23,7 @@
 # cameras only join their KVS channel while a stream is being requested, so an
 # idle account produces no traffic at all.
 # =============================================================================
-name: instavision
+name: instavision-relay
 
 services:
   mediamtx:
