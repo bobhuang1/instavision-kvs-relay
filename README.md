@@ -149,13 +149,32 @@ path. Note that the gateway still needs a working account sign-in; without one i
 with `could not sign in`, and `restart: always` turns that into a restart loop until `.env`
 is filled in.
 
-**Known gap on a shifted copy:** the 🔗 Streams & ports tab and `GET /api/streams` print
-the *default* ports — `rtsp://…:8574`, `:8908`, `:8909` — because those strings are
-literals in `gateway.py`, not derived from `INSTAVISION_RTSP_BASE`/`_HLS_BASE`/`_WEBRTC_BASE`.
-Measured on the run above: the copy answered on 8674/8918/8919 and still reported
-8574/8908/8909. The streams worked; only the displayed addresses and the generated Frigate
-YAML were wrong, so on a shifted copy use your own ports there rather than the ones the
-page prints.
+**Ports on a shifted copy:** 🔗 Streams & ports and `GET /api/streams` report the ports
+the gateway is actually serving on, not the defaults. Each one is read back from the same
+setting that decides where the relay publishes or where the WHEP/HLS proxies forward:
+
+| Shown as | Derived from | Fallback |
+| --- | --- | --- |
+| Gateway (this page) | the port the HTTP server is bound to (`INSTAVISION_UI_PORT`) | 8665 |
+| RTSP (MediaMTX) | `INSTAVISION_RTSP_BASE` | 8574 |
+| HLS | `INSTAVISION_HLS_BASE` | 8908 |
+| WebRTC / WHEP | `INSTAVISION_WEBRTC_BASE` | 8909 |
+
+The `compose.test.yml` above therefore needs no further change: on 8674/8918/8919 the tab
+and the API print 8674/8918/8919, and the per-camera `rtsp`/`hls`/`webrtc` URLs and the
+generated Frigate `go2rtc:` block follow. Exercised through the real HTTP handler with that
+environment on 2026-11-01 (one camera stubbed in, so only the port path was under test):
+
+```
+rtsp://192.168.1.30:8674/<path>
+http://192.168.1.30:8918/<path>/index.m3u8
+http://192.168.1.30:8919/<path>/
+```
+
+The one port that stays fixed is **`rtsp://127.0.0.1:8554`** in the generated Frigate
+`cameras:` block. That is Frigate's own go2rtc inside the Frigate container, which the
+stanza tells Frigate to read from — it is not a port this relay serves, so it does not
+move with `INSTAVISION_RTSP_BASE`.
 
 `--list` shows what the account holds (the profile keeps this from starting a second
 set of streaming sessions):

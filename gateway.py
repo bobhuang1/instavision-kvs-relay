@@ -53,6 +53,7 @@ import secrets
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import quote, unquote
@@ -74,6 +75,28 @@ MEDIAMTX_WEBRTC = (os.environ.get("INSTAVISION_WEBRTC_BASE")
                    or "http://127.0.0.1:8909").rstrip("/")
 MEDIAMTX_HLS = (os.environ.get("INSTAVISION_HLS_BASE")
                 or "http://127.0.0.1:8908").rstrip("/")
+
+
+def _port_of(base: str, default: int) -> int:
+    """The port a base URL actually names, falling back to the old default.
+
+    The Streams tab and the generated Frigate YAML used to print literals -
+    8574/8908/8909 - regardless of what the stack was serving. On the isolated
+    parallel copy (8674/8918/8919) that produced addresses with nobody behind
+    them, and a go2rtc stanza pointing at the wrong port. Deriving them from the
+    same bases the relay publishes to and the WHEP proxy forwards to means the
+    page cannot disagree with the wire.
+    """
+    try:
+        return urllib.parse.urlsplit(base).port or default
+    except ValueError:
+        return default
+
+
+RTSP_PORT = _port_of(os.environ.get("INSTAVISION_RTSP_BASE", "rtsp://127.0.0.1:8574"),
+                     8574)
+HLS_PORT = _port_of(MEDIAMTX_HLS, 8908)
+WEBRTC_PORT = _port_of(MEDIAMTX_WEBRTC, 8909)
 
 DEVICE_TTL = float(os.environ.get("INSTAVISION_DEVICE_TTL", "60"))
 SNAPSHOT_TTL = float(os.environ.get("INSTAVISION_SNAPSHOT_TTL", "30"))
@@ -693,9 +716,9 @@ class Handler(BaseHTTPRequestHandler):
                 "state": "live" if live else ("waiting" if worker else "off"),
                 "detail": worker.get("last_error") or "",
                 "frames": frames,
-                "rtsp": f"rtsp://{host}:8574/{slug(name)}",
-                "hls": f"http://{host}:8908/{slug(name)}/index.m3u8",
-                "webrtc": f"http://{host}:8909/{slug(name)}/",
+                "rtsp": f"rtsp://{host}:{RTSP_PORT}/{slug(name)}",
+                "hls": f"http://{host}:{HLS_PORT}/{slug(name)}/index.m3u8",
+                "webrtc": f"http://{host}:{WEBRTC_PORT}/{slug(name)}/",
                 "whep": f"/whep/{quote(name)}",
                 "snapshot": f"/api/snapshot/{quote(name)}",
             })
@@ -724,9 +747,9 @@ class Handler(BaseHTTPRequestHandler):
             "frigate_yaml": "\n".join(lines),
             "ports": [
                 {"name": "Gateway (this page)", "address": f"http://{host}:{UI_PORT}"},
-                {"name": "RTSP (MediaMTX)", "address": f"rtsp://{host}:8574/<path>"},
-                {"name": "HLS", "address": f"http://{host}:8908/<path>/index.m3u8"},
-                {"name": "WebRTC / WHEP", "address": f"http://{host}:8909/<path>/"},
+                {"name": "RTSP (MediaMTX)", "address": f"rtsp://{host}:{RTSP_PORT}/<path>"},
+                {"name": "HLS", "address": f"http://{host}:{HLS_PORT}/<path>/index.m3u8"},
+                {"name": "WebRTC / WHEP", "address": f"http://{host}:{WEBRTC_PORT}/<path>/"},
                 {"name": "Frigate go2rtc", "address": "rtsp://127.0.0.1:8554/<path>"},
             ],
         }
