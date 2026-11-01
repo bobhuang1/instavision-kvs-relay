@@ -382,13 +382,23 @@ class KvsViewer:
             if self.frames % 30 == 0:
                 self.log(f"{self.frames} frames")
 
-    async def run(self, seconds: float, answer_timeout: float | None = None):
+    async def run(self, seconds: float, answer_timeout: float | None = None,
+                  stop_event=None):
+        """Hold the session, or return early when stop_event is set.
+
+        Without the stop_event a shutdown has to wait out the whole session (ten
+        minutes in the gateway), which left the publisher's ffmpeg running: the
+        worker's finally block never ran. Stopping is supposed to be immediate.
+        """
         loop = asyncio.get_event_loop()
         started = loop.time()
         task = asyncio.ensure_future(self.connect())
         finished = asyncio.ensure_future(self.done.wait())
         try:
             while True:
+                if stop_event is not None and stop_event.is_set():
+                    self.error = "stopped"
+                    break
                 elapsed = loop.time() - started
                 if elapsed >= seconds:
                     break

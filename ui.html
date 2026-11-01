@@ -5,254 +5,473 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>InstaVision</title>
 <style>
-  :root {
-    --bg: #0f1115; --panel: #171a21; --line: #262b36; --text: #e6e9ef;
-    --dim: #8b93a3; --ok: #35c46b; --warn: #e0a53c; --bad: #e05c5c; --accent: #4c8dff;
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text);
-         font: 14px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; }
-  header { display: flex; align-items: center; gap: 14px; padding: 14px 18px;
-           border-bottom: 1px solid var(--line); position: sticky; top: 0;
-           background: rgba(15,17,21,.94); backdrop-filter: blur(6px); z-index: 5; }
-  header h1 { font-size: 15px; margin: 0; letter-spacing: .02em; }
-  .chip { font-size: 12px; color: var(--dim); border: 1px solid var(--line);
-          border-radius: 999px; padding: 2px 9px; }
-  .chip.ok { color: var(--ok); border-color: #1d4a2f; }
-  .chip.warn { color: var(--warn); border-color: #4a3c1d; }
-  .chip.bad { color: var(--bad); border-color: #4a2020; }
-  header .grow { flex: 1; }
-  button { font: inherit; color: var(--text); background: var(--panel);
-           border: 1px solid var(--line); border-radius: 8px; padding: 6px 11px;
-           cursor: pointer; }
-  button:hover { border-color: #3a4150; }
-  button:active { transform: translateY(1px); }
-  main { padding: 16px; display: grid; gap: 14px;
-         grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
-  .card { background: var(--panel); border: 1px solid var(--line);
-          border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
-  .shot { position: relative; aspect-ratio: 16/9; background: #0a0c10; }
-  .shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .shot .none { position: absolute; inset: 0; display: flex; align-items: center;
-                justify-content: center; color: var(--dim); font-size: 12px; }
-  .badge { position: absolute; top: 8px; left: 8px; font-size: 11px;
-           padding: 2px 7px; border-radius: 999px; background: rgba(0,0,0,.6);
-           border: 1px solid var(--line); }
-  .body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 10px; }
-  .row { display: flex; align-items: center; gap: 8px; }
-  .row .grow { flex: 1; }
-  .name { font-weight: 600; }
-  .sub { color: var(--dim); font-size: 12px; }
-  .pad { display: grid; grid-template-columns: repeat(3, 42px);
-         grid-template-rows: repeat(3, 42px); gap: 6px; justify-content: start; }
-  .pad button { padding: 0; font-size: 15px; }
-  .pad .mid { background: #12151b; color: var(--dim); }
-  .hint { color: var(--dim); font-size: 11px; }
-  dialog { border: 1px solid var(--line); background: var(--panel); color: var(--text);
-           border-radius: 14px; padding: 0; width: min(760px, 94vw); }
-  dialog::backdrop { background: rgba(0,0,0,.7); }
-  .dlg-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px;
-              border-bottom: 1px solid var(--line); }
-  .dlg-body { padding: 12px 14px 16px; display: flex; flex-direction: column; gap: 10px; }
-  iframe { width: 100%; aspect-ratio: 16/9; border: 1px solid var(--line);
-           border-radius: 10px; background: #000; }
-  .warnbox { border: 1px solid #4a3c1d; background: #241d0f; color: #e8c877;
-             padding: 10px 12px; border-radius: 10px; font-size: 12.5px; }
+  :root { --bg:#0f1115; --panel:#171a21; --panel2:#12151b; --line:#262b36; --text:#e6e9ef;
+          --dim:#8b93a3; --ok:#35c46b; --warn:#e0a53c; --bad:#e05c5c; --accent:#4c8dff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font:14px/1.45 -apple-system,"Segoe UI",Roboto,sans-serif; }
+  button, input, select { font:inherit; color:var(--text); }
+  button { background:var(--panel); border:1px solid var(--line); border-radius:8px;
+           padding:6px 11px; cursor:pointer; }
+  button:hover { border-color:#3a4150; }
+  button:active { transform:translateY(1px); }
+  button.primary { background:#1d3a6b; border-color:#2b4f8f; color:#eaf1ff; font-weight:600; }
+  button.danger { border-color:#4a2020; color:#f0a9a9; }
+  button:disabled { opacity:.5; cursor:default; }
+  header { display:flex; align-items:center; gap:14px; padding:12px 18px;
+           border-bottom:1px solid var(--line); position:sticky; top:0; z-index:9;
+           background:rgba(15,17,21,.95); backdrop-filter:blur(6px); }
+  .brand { display:flex; align-items:center; gap:9px; font-weight:600; }
+  .dot { width:9px; height:9px; border-radius:50%; background:var(--accent);
+         box-shadow:0 0 12px var(--accent); }
+  nav { display:flex; gap:6px; }
+  nav button { border-radius:999px; padding:5px 12px; color:var(--dim); }
+  nav button.on { color:var(--text); border-color:#35507f; background:#16233a; }
+  .grow { flex:1; }
+  .chip { font-size:12px; color:var(--dim); border:1px solid var(--line);
+          border-radius:999px; padding:2px 9px; white-space:nowrap; }
+  .chip.ok { color:var(--ok); border-color:#1d4a2f; }
+  .chip.warn { color:var(--warn); border-color:#4a3c1d; }
+  main { padding:16px; }
+  section { display:none; }
+  section.on { display:block; }
+  .grid { display:grid; gap:14px; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px;
+          overflow:hidden; display:flex; flex-direction:column; }
+  .shot { position:relative; aspect-ratio:16/9; background:#07090c; overflow:hidden; }
+  .shot video, .shot img { width:100%; height:100%; object-fit:cover; display:block;
+                           transition:transform .2s ease; transform-origin:center; }
+  .badge { position:absolute; top:8px; left:8px; font-size:11px; padding:2px 7px;
+           border-radius:999px; background:rgba(0,0,0,.65); border:1px solid var(--line); }
+  .tools { position:absolute; right:8px; bottom:8px; display:flex; gap:6px;
+           opacity:0; transition:opacity .15s; }
+  .shot:hover .tools, .shot:focus-within .tools { opacity:1; }
+  .tools button { padding:4px 8px; font-size:12px; background:rgba(12,15,20,.8); }
+  .pad { position:absolute; left:8px; bottom:8px; display:grid;
+         grid-template-columns:repeat(3,34px); grid-template-rows:repeat(3,34px);
+         gap:5px; opacity:0; transition:opacity .15s; }
+  .shot:hover .pad, .shot:focus-within .pad { opacity:1; }
+  .pad button { padding:0; font-size:13px; background:rgba(12,15,20,.8); }
+  .pad .mid { color:var(--dim); }
+  .body { padding:9px 12px 11px; display:flex; align-items:center; gap:8px; }
+  .name { font-weight:600; }
+  .sub { color:var(--dim); font-size:12px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); }
+  th { color:var(--dim); font-weight:600; font-size:12px; }
+  tr:hover td { background:#141821; }
+  .thumb { width:64px; height:36px; object-fit:cover; border-radius:5px; background:#07090c; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:12px;
+           padding:16px; margin-bottom:14px; }
+  .panel h3 { margin:0 0 4px; font-size:14px; }
+  .panel p { color:var(--dim); font-size:12.5px; margin:0 0 12px; }
+  code, pre, textarea { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; }
+  pre, textarea { width:100%; background:var(--panel2); border:1px solid var(--line);
+                  border-radius:9px; padding:11px; color:#cdd6e4; overflow:auto; }
+  textarea { resize:vertical; min-height:150px; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .field { margin-bottom:10px; }
+  .field label { display:block; font-size:12px; color:var(--dim); margin-bottom:4px; }
+  .field input { width:260px; max-width:100%; padding:8px 10px; border-radius:8px;
+                 border:1px solid var(--line); background:var(--panel2); }
+  .msg { font-size:12.5px; color:var(--warn); min-height:18px; }
+  .empty { color:var(--dim); padding:24px; text-align:center; }
+  .note { border:1px solid #4a3c1d; background:#241d0f; color:#e8c877; padding:10px 12px;
+          border-radius:10px; font-size:12.5px; margin-bottom:12px; }
 </style>
 </head>
 <body>
 <header>
-  <h1>InstaVision</h1>
-  <span id="health" class="chip">…</span>
-  <span id="counts" class="chip">…</span>
+  <span class="brand"><span class="dot"></span>InstaVision</span>
+  <nav>
+    <button data-tab="viewer" class="on">📹 Viewer</button>
+    <button data-tab="cameras">📷 Cameras</button>
+    <button data-tab="streams">🔗 Streams &amp; ports</button>
+    <button data-tab="settings">⚙ Settings</button>
+  </nav>
   <span class="grow"></span>
+  <span class="chip" id="health">…</span>
   <button id="refresh">Refresh</button>
 </header>
-<main id="grid"></main>
 
-<dialog id="live">
-  <div class="dlg-head">
-    <strong id="live-title">Live</strong>
-    <span id="live-state" class="chip">…</span>
-    <span class="grow" style="flex:1"></span>
-    <button id="live-close">Close</button>
-  </div>
-  <div class="dlg-body">
-    <div id="live-note" class="warnbox" hidden></div>
-    <iframe id="live-frame" allow="autoplay; fullscreen"></iframe>
-    <div class="hint" id="live-hint"></div>
-  </div>
-</dialog>
+<main>
+  <section id="viewer" class="on">
+    <div class="note" id="viewer-note" hidden></div>
+    <div class="grid" id="grid"></div>
+    <div class="empty" id="viewer-empty" hidden>No cameras enrolled. Add some under Cameras.</div>
+  </section>
+
+  <section id="cameras">
+    <div class="panel">
+      <h3>Cameras on this account</h3>
+      <p>Adding a camera enrolls it in the relay, which holds a viewer session on its
+         channel and publishes RTSP as soon as the camera streams.</p>
+      <div class="row" style="margin-bottom:10px">
+        <button id="find">🔍 Find my cameras</button>
+        <span class="sub" id="cam-count"></span>
+      </div>
+      <table>
+        <thead><tr><th></th><th>Name</th><th>IP</th><th>Model</th><th>PTZ</th>
+          <th>Stream</th><th></th></tr></thead>
+        <tbody id="cam-rows"><tr><td colspan="7" class="sub">loading…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="streams">
+    <div class="panel">
+      <h3>Ports</h3>
+      <p>Every enrolled camera appears on these.</p>
+      <div id="port-list"></div>
+    </div>
+    <div class="panel">
+      <h3>Stream URLs</h3>
+      <p>Copy the RTSP path straight into Frigate's go2rtc, or the WHEP URL into a browser.</p>
+      <table><thead><tr><th>Camera</th><th>RTSP</th><th>HLS</th></tr></thead>
+        <tbody id="url-rows"></tbody></table>
+    </div>
+    <div class="panel">
+      <h3>Frigate &amp; Home Assistant</h3>
+      <p>Generated from the cameras that are enrolled.</p>
+      <textarea id="frigate" readonly></textarea>
+      <div class="row" style="margin-top:10px">
+        <button id="copy-yaml">📋 Copy Frigate YAML</button>
+        <button id="copy-steps">📋 Copy steps</button>
+        <span class="msg" id="stream-msg"></span>
+      </div>
+    </div>
+  </section>
+
+  <section id="settings">
+    <div class="panel">
+      <h3>Sign-in</h3>
+      <p>One administrator, as the OSAIO relay has.</p>
+      <div class="field"><label for="cur">Current password</label>
+        <input id="cur" type="password" autocomplete="current-password"></div>
+      <div class="field"><label for="next">New password</label>
+        <input id="next" type="password" autocomplete="new-password"></div>
+      <button class="primary" id="save-pw">Change password</button>
+      <span class="msg" id="pw-msg"></span>
+    </div>
+    <div class="panel">
+      <h3>Relay</h3>
+      <p>Stop the viewer sessions without touching this page.</p>
+      <div class="row">
+        <button id="stop-relay">⛔ Stop cameras</button>
+        <button id="start-relay">▶ Start cameras</button>
+        <span class="msg" id="relay-msg"></span>
+      </div>
+    </div>
+    <div class="panel">
+      <h3>Session</h3>
+      <p>Signed in as <strong id="who">admin</strong>.</p>
+      <button id="sign-out">⏻ Sign out</button>
+    </div>
+  </section>
+</main>
 
 <script>
-const $ = (s, r = document) => r.querySelector(s);
-let state = { cameras: [], relay: {} };
-let refreshTimer = null;
-let liveTimer = null;
+const $ = (sel) => document.querySelector(sel);
+const state = { cameras: [], streams: null, tab: "viewer", pcs: new Map(), retry: null };
+// Values like "rtsp://host:8574/<path>" must not be parsed as HTML.
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>]/g,
+  (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 
-function fmtAge(s) {
-  if (s == null) return "—";
-  if (s < 60) return Math.round(s) + "s";
-  if (s < 3600) return Math.round(s / 60) + " min";
-  return (s / 3600).toFixed(1) + " h";
-}
-
-async function getJSON(url, opts) {
-  const r = await fetch(url, opts);
-  const text = await r.text();
-  let data = null;
-  try { data = JSON.parse(text); } catch (e) { data = { error: text.slice(0, 200) }; }
-  if (!r.ok && !data.error) data.error = "HTTP " + r.status;
+async function api(url, opts) {
+  const res = await fetch(url, opts);
+  if (res.status === 401) { location.replace("/login"); throw new Error("signed out"); }
+  const text = await res.text();
+  let data = {};
+  try { data = text ? JSON.parse(text) : {}; } catch (e) { data = { error: text.slice(0, 200) }; }
+  if (!res.ok && !data.error) data.error = "HTTP " + res.status;
   return data;
 }
 
-async function ptz(name, pan, tilt, nonStop) {
-  const res = await getJSON("/api/ptz/" + encodeURIComponent(name), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ pan: pan, tilt: tilt, nonStop: nonStop })
+function post(url, body) {
+  return api(url, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {}),
   });
-  return res;
 }
 
-async function ptzStop(name) {
-  return getJSON("/api/ptz/" + encodeURIComponent(name) + "/stop", { method: "POST" });
+// --- WebRTC ---------------------------------------------------------------
+
+function waitIce(pc, ms) {
+  return new Promise((resolve) => {
+    if (pc.iceGatheringState === "complete") return resolve();
+    const done = () => { pc.removeEventListener("icegatheringstatechange", check); resolve(); };
+    const check = () => { if (pc.iceGatheringState === "complete") done(); };
+    pc.addEventListener("icegatheringstatechange", check);
+    setTimeout(done, ms);
+  });
 }
 
-function card(cam) {
+async function playWhep(video, cam) {
+  const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+  state.pcs.set(cam.name, pc);
+  pc.addTransceiver("video", { direction: "recvonly" });
+  pc.addTransceiver("audio", { direction: "recvonly" });
+  pc.ontrack = (ev) => {
+    video.srcObject = ev.streams[0];
+    video.play().catch(() => {});
+  };
+  await pc.setLocalDescription(await pc.createOffer());
+  await waitIce(pc, 1500);
+  const res = await fetch(cam.whep, {
+    method: "POST", headers: { "Content-Type": "application/sdp" },
+    body: pc.localDescription.sdp,
+  });
+  if (!res.ok) { pc.close(); state.pcs.delete(cam.name); throw new Error("whep " + res.status); }
+  await pc.setRemoteDescription({ type: "answer", sdp: await res.text() });
+}
+
+function stopTile(name) {
+  const pc = state.pcs.get(name);
+  if (pc) { pc.close(); state.pcs.delete(name); }
+}
+
+// --- viewer ---------------------------------------------------------------
+
+function tile(cam) {
   const el = document.createElement("article");
   el.className = "card";
-  const streaming = cam.state === "streaming";
-  const badge = streaming ? "LIVE" : (cam.online ? "snapshot" : "offline");
-  const badgeColor = streaming ? "var(--ok)" : (cam.online ? "var(--dim)" : "var(--bad)");
+  const live = cam.state === "live";
   el.innerHTML = `
     <div class="shot">
-      <img alt="" src="/api/snapshot/${encodeURIComponent(cam.name)}?t=${Date.now()}"
-           onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
-      <div class="none" style="display:none">no snapshot</div>
-      <span class="badge" style="color:${badgeColor}">${badge}</span>
+      <img alt="" src="${cam.snapshot}?t=0" data-fallback="1"
+           onerror="this.style.visibility='hidden'"
+           style="${live ? "display:none" : ""}">
+      <video muted autoplay playsinline ${live ? "" : 'style="display:none"'}></video>
+      <span class="badge" data-badge="1"></span>
+      <div class="pad">${cam.ptz ? `
+        <span></span><button data-move="up">▲</button><span></span>
+        <button data-move="left">◀</button><button class="mid" data-stop="1">■</button>
+        <button data-move="right">▶</button>
+        <span></span><button data-move="down">▼</button><span></span>` : ""}
+      </div>
+      <div class="tools">
+        <button data-mute="1" title="Mute">🔇</button>
+        <button data-zoom-out="1" title="Zoom out">−</button>
+        <button data-zoom-reset="1" data-zoom="1" title="Reset zoom">1.0x</button>
+        <button data-zoom-in="1" title="Zoom in">+</button>
+        <button data-full="1" title="Fullscreen">⛶</button>
+      </div>
     </div>
     <div class="body">
-      <div class="row">
-        <span class="name">${cam.name}</span>
-        <span class="grow"></span>
-        <span class="sub">${cam.ip || ""} ${cam.ptz ? "· PTZ" : ""}</span>
-      </div>
-      <div class="row">
-        <div class="pad">
-          <span></span><button data-move="up">▲</button><span></span>
-          <button data-move="left">◀</button>
-          <button class="mid" data-stop="1">■</button>
-          <button data-move="right">▶</button>
-          <span></span><button data-move="down">▼</button><span></span>
-        </div>
-        <div class="grow"></div>
-        <div style="display:flex;flex-direction:column;gap:8px">
-          <button data-live="1">Live</button>
-          <button data-snap="1">Snapshot</button>
-        </div>
-      </div>
-      <div class="hint" data-note="1">${cam.state_detail || ""}</div>
+      <span class="name">${cam.name}</span>
+      <span class="grow"></span>
+      <span class="sub">${cam.ip || ""}${cam.ptz ? " · PTZ" : ""}</span>
     </div>`;
 
+  const video = el.querySelector("video");
+  const img = el.querySelector("img");
+  const badge = el.querySelector("[data-badge]");
+  const media = el.querySelector(".shot");
+
+  function setBadge() {
+    const c = state.cameras.find(x => x.name === cam.name) || cam;
+    if (c.state === "live") { badge.textContent = "LIVE"; badge.style.color = "var(--ok)"; }
+    else if (c.online) { badge.textContent = "snapshot"; badge.style.color = "var(--dim)"; }
+    else { badge.textContent = "offline"; badge.style.color = "var(--bad)"; }
+  }
+  setBadge();
+
+  async function tryLive() {
+    if (state.cameras.find(x => x.name === cam.name)?.state !== "live") return;
+    try {
+      await playWhep(video, cam);
+      video.style.display = "block";
+      img.style.display = "none";
+    } catch (e) {
+      video.style.display = "none";
+      img.style.display = "block";
+    }
+  }
+  if (live) tryLive(); else img.src = cam.snapshot + "?t=" + Date.now();
+
   const step = 300;
-  const moves = {
-    up:    { pan: 0,     tilt: step },
-    down:  { pan: 0,     tilt: -step },
-    left:  { pan: step,  tilt: 0 },
-    right: { pan: -step, tilt: 0 }
-  };
+  const moves = { up: [0, step], down: [0, -step], left: [step, 0], right: [-step, 0] };
   el.querySelectorAll("[data-move]").forEach(btn => {
     btn.onclick = async () => {
-      const m = moves[btn.dataset.move];
-      const note = el.querySelector('[data-note="1"]');
-      note.textContent = "moving…";
-      const res = await ptz(cam.name, m.pan, m.tilt, false);
-      note.textContent = res.error ? ("PTZ failed: " + res.error)
-                                   : "PTZ sent · " + new Date().toLocaleTimeString();
+      const [pan, tilt] = moves[btn.dataset.move];
+      const res = await post(`/api/ptz/${encodeURIComponent(cam.name)}`,
+                             { pan, tilt, nonStop: false });
+      if (!res.ok) badge.textContent = "PTZ failed";
     };
   });
-  el.querySelector("[data-stop]").onclick = async () => {
-    const note = el.querySelector('[data-note="1"]');
-    const res = await ptzStop(cam.name);
-    note.textContent = res.error ? ("stop failed: " + res.error) : "stopped";
+  const stopBtn = el.querySelector("[data-stop]");
+  if (stopBtn) stopBtn.onclick = () =>
+    post(`/api/ptz/${encodeURIComponent(cam.name)}/stop`, {});
+
+  let zoom = 1;
+  const applyZoom = () => {
+    video.style.transform = `scale(${zoom})`;
+    img.style.transform = `scale(${zoom})`;
+    el.querySelector("[data-zoom-reset]").textContent = zoom.toFixed(1) + "x";
   };
-  el.querySelector("[data-snap]").onclick = () => {
-    const img = el.querySelector("img");
-    img.style.display = "block";
-    img.src = "/api/snapshot/" + encodeURIComponent(cam.name) + "?t=" + Date.now();
+  el.querySelector("[data-zoom-in]").onclick = () => { zoom = Math.min(3, zoom + 0.5); applyZoom(); };
+  el.querySelector("[data-zoom-out]").onclick = () => { zoom = Math.max(1, zoom - 0.5); applyZoom(); };
+  el.querySelector("[data-zoom-reset]").onclick = () => {
+    zoom = zoom >= 2 ? 1 : Math.min(3, zoom + 0.5); applyZoom();
   };
-  el.querySelector("[data-live]").onclick = () => openLive(cam);
+  const muteBtn = el.querySelector("[data-mute]");
+  muteBtn.onclick = () => {
+    video.muted = !video.muted;
+    muteBtn.textContent = video.muted ? "🔇" : "🔊";
+  };
+  el.querySelector("[data-full]").onclick = () => {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else media.requestFullscreen?.();
+  };
   return el;
 }
 
-function render() {
+function renderViewer() {
   const grid = $("#grid");
   grid.innerHTML = "";
-  for (const cam of state.cameras) grid.appendChild(card(cam));
-  const relay = state.relay || {};
-  const health = $("#health");
-  if (relay.idle) { health.textContent = "relay idle"; health.className = "chip warn"; }
-  else if (relay.ok) { health.textContent = "relay healthy"; health.className = "chip ok"; }
-  else if (!relay.streaming) {
-    health.textContent = "waiting for cameras"; health.className = "chip";
-  } else { health.textContent = "relay degraded"; health.className = "chip warn"; }
-  $("#counts").textContent =
-    `${state.cameras.filter(c => c.online).length}/${state.cameras.length} online · ` +
-    `${relay.streaming || 0} streaming`;
+  for (const pair of state.pcs.entries()) pair[1].close();
+  state.pcs.clear();
+  const enrolled = state.cameras.filter(c => c.enrolled);
+  $("#viewer-empty").hidden = enrolled.length > 0;
+  const note = $("#viewer-note");
+  const live = enrolled.filter(c => c.state === "live").length;
+  if (enrolled.length && !live) {
+    note.hidden = false;
+    note.textContent = "No camera is publishing right now, so the tiles show each camera's "
+      + "latest cloud snapshot. A tile switches to video by itself the moment its camera streams.";
+  } else {
+    note.hidden = true;
+  }
+  for (const cam of enrolled) grid.appendChild(tile(cam));
 }
+
+// --- cameras tab ----------------------------------------------------------
+
+function renderCameras() {
+  const body = $("#cam-rows");
+  body.innerHTML = "";
+  $("#cam-count").textContent =
+    `${state.cameras.length} on the account · ${state.cameras.filter(c => c.enrolled).length} enrolled`;
+  for (const cam of state.cameras) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><img class="thumb" src="${cam.snapshot}?t=0" alt=""
+               onerror="this.style.visibility='hidden'"></td>
+      <td><strong>${cam.name}</strong><div class="sub">${cam.variant || ""}</div></td>
+      <td>${cam.ip || "—"}</td>
+      <td class="sub">${cam.model || ""}</td>
+      <td>${cam.ptz ? "yes" : "—"}</td>
+      <td><span class="chip ${cam.state === "live" ? "ok" : ""}">${
+        cam.state === "live" ? "live" : (cam.enrolled ? "waiting" : "off")}</span></td>
+      <td style="text-align:right">
+        <button class="${cam.enrolled ? "danger" : "primary"}">
+          ${cam.enrolled ? "Remove" : "Add to InstaVision"}
+        </button></td>`;
+    tr.querySelector("button").onclick = async (ev) => {
+      const button = ev.currentTarget;
+      button.disabled = true;
+      button.textContent = "working…";
+      await post(`/api/cameras/${encodeURIComponent(cam.name)}/enroll`,
+                 { enrolled: !cam.enrolled });
+      await load();
+    };
+    body.appendChild(tr);
+  }
+}
+
+// --- streams tab ----------------------------------------------------------
+
+function renderStreams() {
+  const s = state.streams;
+  if (!s) return;
+  $("#port-list").innerHTML = s.ports.map(p =>
+    `<div class="row" style="padding:4px 0"><span class="sub" style="width:170px">${esc(p.name)}</span>
+     <code>${esc(p.address)}</code></div>`).join("");
+  $("#url-rows").innerHTML = s.cameras.length ? s.cameras.map(c =>
+    `<tr><td>${c.name}</td><td><code>${c.rtsp}</code></td>
+     <td><code>${c.hls}</code></td></tr>`).join("")
+    : `<tr><td colspan="3" class="sub">nothing enrolled yet</td></tr>`;
+  $("#frigate").value = s.frigate_yaml;
+}
+
+async function copy(text, msgEl) {
+  try {
+    await navigator.clipboard.writeText(text);
+    msgEl.textContent = "copied";
+  } catch (e) {
+    msgEl.textContent = "copy failed — select the text";
+  }
+  setTimeout(() => { msgEl.textContent = ""; }, 2500);
+}
+
+// --- load / routing -------------------------------------------------------
 
 async function load() {
-  state = await getJSON("/api/status");
-  render();
+  const data = await api("/api/cameras");
+  state.cameras = data.cameras || [];
+  state.streams = await api("/api/streams");
+  const health = $("#health");
+  const live = state.cameras.filter(c => c.state === "live").length;
+  const enrolled = state.cameras.filter(c => c.enrolled).length;
+  health.textContent = `${state.cameras.length} cameras · ${enrolled} enrolled · ${live} live`;
+  health.className = "chip" + (live ? " ok" : "");
+  if (state.tab === "viewer") renderViewer();
+  if (state.tab === "cameras") renderCameras();
+  if (state.tab === "streams") renderStreams();
 }
 
-function openLive(cam) {
-  const dlg = $("#live");
-  $("#live-title").textContent = cam.name + " · live";
-  const frame = $("#live-frame");
-  const note = $("#live-note");
-  const hint = $("#live-hint");
-  frame.src = cam.live_url || "about:blank";
-  if (cam.state === "streaming") {
-    note.hidden = true;
-    $("#live-state").textContent = "streaming";
-    $("#live-state").className = "chip ok";
-  } else {
-    note.hidden = false;
-    note.textContent = cam.state_detail ||
-      "This camera is not publishing to its cloud channel, so there is nothing to show yet.";
-    $("#live-state").textContent = cam.state || "idle";
-    $("#live-state").className = "chip warn";
-  }
-  hint.textContent = "Opens the MediaMTX player on port 8909. It appears the moment the camera publishes.";
-  dlg.showModal();
-  clearInterval(liveTimer);
-  liveTimer = setInterval(async () => {
-    const s = await getJSON("/api/status");
-    const c = (s.cameras || []).find(x => x.name === cam.name);
-    if (!c) return;
-    if (c.state === "streaming" && !frame.src.includes("/insta_")) {
-      frame.src = c.live_url;
-      $("#live-state").textContent = "streaming";
-      $("#live-state").className = "chip ok";
-      note.hidden = true;
-    }
-    if (c.state !== "streaming") {
-      $("#live-state").textContent = c.state || "idle";
-      $("#live-state").className = "chip warn";
-    }
-  }, 5000);
+function show(tab) {
+  state.tab = tab;
+  document.querySelectorAll("nav button").forEach(b =>
+    b.classList.toggle("on", b.dataset.tab === tab));
+  document.querySelectorAll("main section").forEach(s =>
+    s.classList.toggle("on", s.id === tab));
+  if (tab === "viewer") renderViewer();
+  if (tab === "cameras") renderCameras();
+  if (tab === "streams") renderStreams();
 }
 
-$("#live-close").onclick = () => {
-  clearInterval(liveTimer);
-  $("#live-frame").src = "about:blank";
-  $("#live").close();
+document.querySelectorAll("nav button").forEach(b =>
+  b.onclick = () => show(b.dataset.tab));
+
+$("#refresh").onclick = () => load();
+$("#find").onclick = async () => { await api("/api/cameras"); await load(); };
+
+$("#copy-yaml").onclick = () => copy($("#frigate").value, $("#stream-msg"));
+$("#copy-steps").onclick = () => copy(
+  "1. Add the go2rtc block to Frigate's config.\n" +
+  "2. Add each camera with roles: [detect] (or record).\n" +
+  "3. Restart Frigate and check the camera appears.\n" +
+  "4. Cameras stream only while the InstaVision app (or the camera itself) is publishing.",
+  $("#stream-msg"));
+
+$("#save-pw").onclick = async () => {
+  const res = await post("/api/settings/password",
+                         { current: $("#cur").value, next: $("#next").value });
+  $("#pw-msg").textContent = res.ok ? "password changed" : (res.error || "failed");
+  if (res.ok) { $("#cur").value = ""; $("#next").value = ""; }
 };
-$("#refresh").onclick = load;
-load();
-refreshTimer = setInterval(load, 15000);
+$("#stop-relay").onclick = async () => {
+  const res = await post("/api/relay/stop", {});
+  $("#relay-msg").textContent = res.ok ? "cameras stopped" : (res.error || "failed");
+  await load();
+};
+$("#start-relay").onclick = async () => {
+  const res = await post("/api/relay/start", {});
+  $("#relay-msg").textContent = res.ok ? "cameras started" : (res.error || "failed");
+  await load();
+};
+$("#sign-out").onclick = async () => {
+  await post("/api/logout", {});
+  location.replace("/login");
+};
+
+(async () => {
+  const session = await api("/api/session");
+  $("#who").textContent = session.user || "admin";
+  await load();
+  setInterval(load, 15000);
+})();
 </script>
 </body>
 </html>

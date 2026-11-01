@@ -44,6 +44,10 @@ services:
     # The image's default command is the headless relay; this one serves the UI and
     # runs that same relay inside it.
     command: ["python3", "gateway.py"]
+    # The gateway writes its admin account, enrollment list and session key into
+    # ./state, which Docker mounts with host ownership. Run as the host user so
+    # those writes succeed without chowning the directory to the image's user.
+    user: "${INSTAVISION_UID:-1000}:${INSTAVISION_GID:-1000}"
     environment:
       INSTAVISION_EMAIL: ${INSTAVISION_EMAIL:-}
       INSTAVISION_PASSWORD: ${INSTAVISION_PASSWORD:-}

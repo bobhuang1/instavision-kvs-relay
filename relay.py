@@ -279,7 +279,10 @@ class CameraWorker:
         self.state = "streaming"
 
         try:
-            await viewer.run(SESSION_SECONDS, answer_timeout=ANSWER_TIMEOUT)
+            # The worker's stop event, so a shutdown does not wait out the session
+            # and leave this camera's ffmpeg running.
+            await viewer.run(SESSION_SECONDS, answer_timeout=ANSWER_TIMEOUT,
+                             stop_event=self._stop)
         finally:
             publisher.stop()
             self.frames += viewer.forwarded

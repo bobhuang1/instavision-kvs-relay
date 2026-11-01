@@ -102,36 +102,58 @@ relay logs that and publishes nothing, so a camera cannot quietly start using
 uplink. The gateway ignores that list and enrolls every camera on the account,
 because its job is to be watching when a camera starts streaming.
 
-## Web UI and PTZ
+## The gateway
 
-The gateway is the InstaVision equivalent of the OSAIO relay's gateway, using the
-same idea: one page for every camera, with a live pane and the vendor's own PTZ
-controls.
+This is the same application shape as the OSAIO relay's BombeCam gateway, mapped onto
+what InstaVision allows: one administrator, four tabs, live tiles, and the vendor's
+own PTZ.
+
+| Tab | What it does |
+| --- | --- |
+| 📹 Viewer | Tile per enrolled camera. Plays MediaMTX WHEP inline when the camera streams, otherwise shows its latest cloud snapshot. Hover for the PTZ pad, mute, zoom (1×–3×) and fullscreen. |
+| 📷 Cameras | Every camera on the account with thumbnail, IP, model, PTZ support and stream state; add or remove one from the relay. |
+| 🔗 Streams & ports | The RTSP/HLS/WHEP/RTSP-to-Frigate addresses, per-camera URLs, and **Copy Frigate YAML**. |
+| ⚙ Settings | Change the password, stop or start the camera sessions, sign out. |
+
+**Sign-in.** First visit creates the administrator (username, password, optional
+hint) and stores it in `state/auth.json`; sessions are signed cookies. Setting
+`INSTAVISION_UI_PASSWORD` bootstraps that account on first start and doubles as HTTP
+basic auth, so scripts can call the API without a cookie.
+
+**Enrollment.** Adding a camera writes `state/enrolled.json` and restarts the relay
+with the new list, which takes a few seconds; that is the one operation that
+interrupts the other cameras, and it is deliberately explicit. An empty file enrolls
+every camera on the account.
+
+**Why a WHEP proxy.** The browser talks to `/whep/<name>` on the gateway, which
+forwards to MediaMTX on 8909. Same origin, behind the session, and it keeps working
+when the page is opened by IP or by hostname.
 
 | Endpoint | What it does |
 | --- | --- |
-| `GET /` | Camera grid: snapshot tile per camera, online/streaming badge, PTZ pad |
-| `GET /api/status` | Relay state joined with per-camera metadata (JSON) |
-| `GET /api/snapshot/<name>` | Latest cloud snapshot, proxied and cached (`INSTAVISION_SNAPSHOT_TTL`, default 30 s) |
-| `POST /api/ptz/<name>` | `{"pan": int, "tilt": int, "nonStop": bool}` — the app's `MoveRequest` |
-| `POST /api/ptz/<name>/stop` | Stop a move |
-| `POST /api/ptz/<name>/reset` | Return to the preset position |
+| `GET /` | The app (redirects to `/login` when signed out) |
+| `GET /api/cameras` | Account cameras joined with relay state |
+| `POST /api/cameras/<name>/enroll` | `{"enrolled": bool}` — add or remove from the relay |
+| `GET /api/snapshot/<name>` | Latest cloud snapshot, cached (`INSTAVISION_SNAPSHOT_TTL`, default 30 s) |
+| `POST /api/ptz/<name>` | `{"pan", "tilt", "nonStop"}` — the app's `MoveRequest` |
+| `POST /api/ptz/<name>/stop` · `/reset` | Stop a move / return to preset |
+| `GET /api/streams` | URLs, ports and generated Frigate YAML |
+| `POST /whep/<name>` | WHEP proxy to MediaMTX |
 | `GET /healthz` | Relay health alone, for a watchdog |
 
 PTZ is not a guess: the app's own `DeviceRepository.ptzMove` posts to
 `atlas/spaces/{space}/devices/{id}/ptz/move` with `MoveRequest{pan, tilt, nonStop}`,
-and each camera advertises a `0xFC12 PTZ` cluster with pan and tilt in the range
-`-10000..0`. The UI sends steps of 300, and always offers a stop button because
+and every camera advertises a `0xFC12 PTZ` cluster with pan and tilt in the range
+`-10000..0`. The pad sends steps of 300 and always offers a stop button, because
 `nonStop: true` keeps the head moving until told to stop.
 
-**Auth.** Set `INSTAVISION_UI_PASSWORD` and every endpoint requires HTTP basic auth
-(any username). With no password the UI binds to loopback only — these routes can
-move cameras, so they are not left open to the LAN by default.
+**What the tiles are.** A tile says `LIVE` only when the relay is receiving frames,
+`snapshot` when all it has is a still from the camera's own upload (minutes old), and
+`offline` when the camera reports no address. It never calls a still live.
 
-**What the tiles are.** Snapshots come from the camera's own snapshot upload, not
-from a live stream, so a tile can be minutes old. The UI never calls them live: a
-tile reads `LIVE` only when the relay is receiving frames, `snapshot` when all it has
-is a still, and `offline` when the camera reports no IP.
+**Not ported.** BombeCam also has an Osaio server key / app ID, router-based cloud
+blocking and two-step sign-in. InstaVision has no equivalent of the first two, so
+this deliberately does not invent them; two-step sign-in is not implemented.
 
 ## Adding a camera to Frigate
 
@@ -188,8 +210,10 @@ all pull a stream.
 | `INSTAVISION_HTTP_BIND` | `0.0.0.0` | Status bind address. |
 | `INSTAVISION_STATE_DIR` | `./state` | Status logs and per-camera state. |
 | `INSTAVISION_UI_PORT` | `8665` | Gateway UI port. |
-| `INSTAVISION_UI_BIND` | loopback unless a password is set | UI bind address. |
-| `INSTAVISION_UI_PASSWORD` | *(empty)* | Require HTTP basic auth on the UI and PTZ routes. |
+| `INSTAVISION_UI_BIND` | `0.0.0.0` | Gateway bind address. |
+| `INSTAVISION_UI_PASSWORD` | *(empty)* | Bootstrap administrator password, and HTTP basic auth for scripts. Without it the first visit offers to create the administrator. |
+| `INSTAVISION_SESSION_TTL` | `604800` | Session cookie lifetime, seconds. |
+| `INSTAVISION_UID` / `INSTAVISION_GID` | `1000` | Host user the container runs as, so it can write `./state`. |
 | `INSTAVISION_GATEWAY_ANSWER_TIMEOUT` | `600` | How long the gateway holds a KVS offer before rebuilding the session. |
 | `INSTAVISION_SNAPSHOT_TTL` | `30` | Snapshot cache, seconds. |
 | `FFMPEG_PATH` | `ffmpeg` | ffmpeg binary. |
@@ -239,8 +263,9 @@ in the publishing path, not in the test.
 | [`kvs_viewer.py`](kvs_viewer.py) | The KVS WebRTC viewer on its own: `--device Cam3 --seconds 20`, `--all` to sweep every camera, `--save frame.jpg` to keep the first frame. |
 | [`mqtt_probe.py`](mqtt_probe.py) | Tries the app's AWS IoT MQTT control channel and reports exactly how it is refused. |
 | [`selftest.py`](selftest.py) | The republish round trip described above. |
-| [`gateway.py`](gateway.py) | The web UI, snapshot proxy and PTZ routes; runs the relay in-process. |
-| [`ui.html`](ui.html) | The page itself — plain HTML/CSS/JS, no build step. |
+| [`gateway.py`](gateway.py) | The app: sessions, enrollment, snapshots, PTZ, WHEP proxy; runs the relay in-process. |
+| [`ui.html`](ui.html) | The tabbed page — plain HTML/CSS/JS, no build step. |
+| [`login.html`](login.html) | Sign-in and first-run administrator. |
 
 ## Limitations
 
