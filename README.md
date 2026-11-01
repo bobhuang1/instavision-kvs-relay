@@ -37,6 +37,8 @@ InstaVision app account
 | --- | --- | --- |
 | Vendor login, per-camera credentials, KVS signalling | Works | Fetches real credentials for every device on the account |
 | **Republish path** (WebRTC H.264 -> ffmpeg -> RTSP -> MediaMTX) | **Works** | [`selftest.py`](selftest.py): a generated 640×360 clip is pushed through the real publisher classes and read back off MediaMTX as `h264 640x360 15/1`, decoded frame for frame |
+| **Cloud snapshots** | **Works** | Every camera returns a 640×360 JPEG from its `snapshot_url`; the burned-in timestamp shows the camera uploading on its own schedule (minutes old, so the UI dates them rather than calling them live) |
+| **PTZ** | **Commands accepted, effect unverified** | `POST …/ptz/move` with `{"pan", "tilt", "nonStop"}` (the app's `MoveRequest`) returns 200, and pan/tilt are advertised in `-10000..0`. Whether the head physically moves could not be confirmed: the camera reports no change in its PTZ attribute values, and the only view of the camera is a snapshot that updates on its own schedule |
 | **Camera capture** (a camera actually publishing when we join) | **Not proven** | On this account, no camera answered an offer: an 8-camera sweep, then a viewer offer held open on one camera for ten minutes, both produced no SDP answer, no `recv` of any kind from AWS, and no RTSP path — see [`selftest.py`](selftest.py) for the half that does work |
 
 The relay cannot *make* a camera stream. The app's own viewer path was
@@ -81,18 +83,55 @@ Fill in `.env`:
 
 ```bash
 docker compose up -d
-docker compose logs -f relay
+docker compose logs -f gateway
 ```
 
-`--list` shows what the account holds:
+That starts MediaMTX and the gateway, which serves the UI on port 8665 and runs the
+relay inside itself, so the UI and the RTSP paths cannot drift apart. Open
+`http://<host>:8665/`.
+
+`--list` shows what the account holds (the profile keeps this from starting a second
+set of streaming sessions):
 
 ```bash
-docker compose run --rm relay python3 relay.py --list
+docker compose run --rm --profile relay relay python3 relay.py --list
 ```
 
 Publishing is deliberately an allowlist: an empty `INSTAVISION_ENROLLED` means the
 relay logs that and publishes nothing, so a camera cannot quietly start using
-uplink.
+uplink. The gateway ignores that list and enrolls every camera on the account,
+because its job is to be watching when a camera starts streaming.
+
+## Web UI and PTZ
+
+The gateway is the InstaVision equivalent of the OSAIO relay's gateway, using the
+same idea: one page for every camera, with a live pane and the vendor's own PTZ
+controls.
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET /` | Camera grid: snapshot tile per camera, online/streaming badge, PTZ pad |
+| `GET /api/status` | Relay state joined with per-camera metadata (JSON) |
+| `GET /api/snapshot/<name>` | Latest cloud snapshot, proxied and cached (`INSTAVISION_SNAPSHOT_TTL`, default 30 s) |
+| `POST /api/ptz/<name>` | `{"pan": int, "tilt": int, "nonStop": bool}` — the app's `MoveRequest` |
+| `POST /api/ptz/<name>/stop` | Stop a move |
+| `POST /api/ptz/<name>/reset` | Return to the preset position |
+| `GET /healthz` | Relay health alone, for a watchdog |
+
+PTZ is not a guess: the app's own `DeviceRepository.ptzMove` posts to
+`atlas/spaces/{space}/devices/{id}/ptz/move` with `MoveRequest{pan, tilt, nonStop}`,
+and each camera advertises a `0xFC12 PTZ` cluster with pan and tilt in the range
+`-10000..0`. The UI sends steps of 300, and always offers a stop button because
+`nonStop: true` keeps the head moving until told to stop.
+
+**Auth.** Set `INSTAVISION_UI_PASSWORD` and every endpoint requires HTTP basic auth
+(any username). With no password the UI binds to loopback only — these routes can
+move cameras, so they are not left open to the LAN by default.
+
+**What the tiles are.** Snapshots come from the camera's own snapshot upload, not
+from a live stream, so a tile can be minutes old. The UI never calls them live: a
+tile reads `LIVE` only when the relay is receiving frames, `snapshot` when all it has
+is a still, and `offline` when the camera reports no IP.
 
 ## Adding a camera to Frigate
 
@@ -130,6 +169,9 @@ are chosen not to collide:
 | OSAIO relay (MediaMTX) | 8564/tcp | 9997 | 8898 | 8899 |
 | **this relay (MediaMTX)** | **8574/tcp** | **9998** | **8908** | **8909** |
 
+The gateway's own pages sit on **8665** (UI + API), with the relay's health listener
+on **8656** so a watchdog can watch the relay alone.
+
 In `mediamtx.yml`, publishing is localhost-only (the relay runs on the same host);
 reading is open to the LAN so Frigate, Home Assistant and a phone on the sofa can
 all pull a stream.
@@ -145,6 +187,11 @@ all pull a stream.
 | `INSTAVISION_HTTP_PORT` | `8655` | Status port. `GET /` returns 200 only when every enrolled camera is streaming, 503 otherwise, so it is usable as a container health check. |
 | `INSTAVISION_HTTP_BIND` | `0.0.0.0` | Status bind address. |
 | `INSTAVISION_STATE_DIR` | `./state` | Status logs and per-camera state. |
+| `INSTAVISION_UI_PORT` | `8665` | Gateway UI port. |
+| `INSTAVISION_UI_BIND` | loopback unless a password is set | UI bind address. |
+| `INSTAVISION_UI_PASSWORD` | *(empty)* | Require HTTP basic auth on the UI and PTZ routes. |
+| `INSTAVISION_GATEWAY_ANSWER_TIMEOUT` | `600` | How long the gateway holds a KVS offer before rebuilding the session. |
+| `INSTAVISION_SNAPSHOT_TTL` | `30` | Snapshot cache, seconds. |
 | `FFMPEG_PATH` | `ffmpeg` | ffmpeg binary. |
 | `INSTAVISION_API`, `INSTAVISION_PARTNER`, `INSTAVISION_CLIENT_ID`, `INSTAVISION_KVS_REGION` | see `.env.example` | Vendor endpoints and client identity. Only change these if the vendor moves. |
 
@@ -192,10 +239,18 @@ in the publishing path, not in the test.
 | [`kvs_viewer.py`](kvs_viewer.py) | The KVS WebRTC viewer on its own: `--device Cam3 --seconds 20`, `--all` to sweep every camera, `--save frame.jpg` to keep the first frame. |
 | [`mqtt_probe.py`](mqtt_probe.py) | Tries the app's AWS IoT MQTT control channel and reports exactly how it is refused. |
 | [`selftest.py`](selftest.py) | The republish round trip described above. |
+| [`gateway.py`](gateway.py) | The web UI, snapshot proxy and PTZ routes; runs the relay in-process. |
+| [`ui.html`](ui.html) | The page itself — plain HTML/CSS/JS, no build step. |
 
 ## Limitations
 
-* **The camera must already be publishing.** See "What is and is not proven".
+* **The camera must already be publishing.** See "What is and is not proven". The
+  gateway holds a viewer offer on every camera, so one that starts publishing is
+  picked up within seconds — but nothing here can start the camera itself.
+* **No cloud plan on the test account.** `atlas/spaces/{space}/data` answers
+  `Pool_NotFound` and `subscriptions` is empty, so there are no recorded clips to
+  relay, only the 1-day snapshot bucket. Whether live view depends on a plan could
+  not be determined from the client side.
 * **Shared with the app.** KVS allows one master per channel — the camera — and
   any number of viewers, but a camera's uplink and viewer slots are finite. The
   relay is another viewer alongside your phone, so expect contention if you

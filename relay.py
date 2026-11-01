@@ -389,8 +389,14 @@ class Relay:
 
     def status(self) -> dict:
         workers = [w.snapshot() for w in self.workers]
-        streaming = [w for w in workers if w["state"] == "streaming"
-                     and (w["last_frame_age_s"] or 0) < 15]
+        # A worker enters "streaming" as soon as ffmpeg starts, before a single
+        # frame has arrived. Counting that as healthy made this report 12/12 while
+        # every camera was silent, so require evidence of frames and use the age of
+        # the last one, not a default of zero.
+        streaming = [w for w in workers
+                     if w["state"] == "streaming"
+                     and w["last_frame_age_s"] is not None
+                     and w["last_frame_age_s"] < 15]
         return {
             # Idle (nothing enrolled) is healthy by definition: there is nothing
             # that ought to be streaming. A watchdog should not alert on it.

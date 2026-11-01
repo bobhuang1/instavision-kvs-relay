@@ -20,7 +20,7 @@ WORKDIR /app
 # websockets runs the KVS signalling socket.
 RUN pip install aiortc==1.15.0 websockets==17.4
 
-COPY probe.py kvs_viewer.py relay.py ./
+COPY probe.py kvs_viewer.py relay.py gateway.py ui.html ./
 
 # Not root: the relay only needs to write its own state directory.
 RUN mkdir -p /app/state && useradd --uid 10001 --create-home relay \

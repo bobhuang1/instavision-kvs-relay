@@ -20,11 +20,9 @@
 #
 # NOTHING IS PUBLISHED UNTIL A CAMERA IS ENROLLED. INSTAVISION_ENROLLED is the
 # allowlist; while it is empty the relay logs that and publishes nothing, so a
-# camera cannot quietly start using the uplink.
-#
-# An enrolled camera is only captured while it is itself uploading to its KVS
-# channel. See README "What is and is not proven": the vendor API has no call
-# that starts a stream, so the relay waits for the camera rather than waking it.
+# camera cannot quietly start using the uplink. Measured 2026-10-31: those
+# cameras only join their KVS channel while a stream is being requested, so an
+# idle account produces no traffic at all.
 # =============================================================================
 name: instavision
 
@@ -36,7 +34,55 @@ services:
     volumes:
       - ./mediamtx.yml:/mediamtx.yml:ro
 
+  # Web UI + PTZ + snapshots. This process runs the relay in-process, so it is the
+  # normal way to run this stack: the UI and the RTSP paths share one credential
+  # path and one set of KVS sessions.
+  gateway:
+    build: .
+    restart: always
+    network_mode: host
+    # The image's default command is the headless relay; this one serves the UI and
+    # runs that same relay inside it.
+    command: ["python3", "gateway.py"]
+    environment:
+      INSTAVISION_EMAIL: ${INSTAVISION_EMAIL:-}
+      INSTAVISION_PASSWORD: ${INSTAVISION_PASSWORD:-}
+      INSTAVISION_PARTNER: ${INSTAVISION_PARTNER:-instaview}
+      INSTAVISION_CLIENT_ID: ${INSTAVISION_CLIENT_ID:-home-user-portal}
+      INSTAVISION_API: ${INSTAVISION_API:-https://api-us.instavision.ai/}
+      INSTAVISION_FIREBASE_KEY: ${INSTAVISION_FIREBASE_KEY:-}
+      INSTAVISION_KVS_REGION: ${INSTAVISION_KVS_REGION:-us-west-2}
+      # Held open, not retried in a loop: the UI polls every 15 s, and refetching
+      # credentials for a dozen cameras that often is what gets an account throttled.
+      INSTAVISION_GATEWAY_ANSWER_TIMEOUT: ${INSTAVISION_GATEWAY_ANSWER_TIMEOUT:-600}
+      INSTAVISION_SESSION_SECONDS: ${INSTAVISION_SESSION_SECONDS:-3600}
+      INSTAVISION_RTSP_BASE: rtsp://127.0.0.1:8574
+      INSTAVISION_RELAY_STATUS_PORT: 8656
+      INSTAVISION_UI_PORT: ${INSTAVISION_UI_PORT:-8665}
+      INSTAVISION_UI_BIND: ${INSTAVISION_UI_BIND:-0.0.0.0}
+      INSTAVISION_UI_PASSWORD: ${INSTAVISION_UI_PASSWORD:-}
+      INSTAVISION_DEVICE_TTL: ${INSTAVISION_DEVICE_TTL:-60}
+      INSTAVISION_SNAPSHOT_TTL: ${INSTAVISION_SNAPSHOT_TTL:-30}
+      INSTAVISION_WEBRTC_BASE: ${INSTAVISION_WEBRTC_BASE:-}
+      INSTAVISION_RTSP_HOST: ${INSTAVISION_RTSP_HOST:-}
+      FFMPEG_PATH: /usr/bin/ffmpeg
+    volumes:
+      - ./state:/app/state
+    depends_on:
+      mediamtx:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:${INSTAVISION_UI_PORT:-8665}/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  # Headless relay only, for when there is no gateway. It is behind a profile so
+  # `docker compose up` does not start a second set of KVS sessions for the same
+  # cameras: enable it with `docker compose --profile relay up -d relay`.
   relay:
+    profiles: ["relay"]
     build: .
     restart: always
     network_mode: host

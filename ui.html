@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>InstaVision</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --line: #262b36; --text: #e6e9ef;
+    --dim: #8b93a3; --ok: #35c46b; --warn: #e0a53c; --bad: #e05c5c; --accent: #4c8dff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; align-items: center; gap: 14px; padding: 14px 18px;
+           border-bottom: 1px solid var(--line); position: sticky; top: 0;
+           background: rgba(15,17,21,.94); backdrop-filter: blur(6px); z-index: 5; }
+  header h1 { font-size: 15px; margin: 0; letter-spacing: .02em; }
+  .chip { font-size: 12px; color: var(--dim); border: 1px solid var(--line);
+          border-radius: 999px; padding: 2px 9px; }
+  .chip.ok { color: var(--ok); border-color: #1d4a2f; }
+  .chip.warn { color: var(--warn); border-color: #4a3c1d; }
+  .chip.bad { color: var(--bad); border-color: #4a2020; }
+  header .grow { flex: 1; }
+  button { font: inherit; color: var(--text); background: var(--panel);
+           border: 1px solid var(--line); border-radius: 8px; padding: 6px 11px;
+           cursor: pointer; }
+  button:hover { border-color: #3a4150; }
+  button:active { transform: translateY(1px); }
+  main { padding: 16px; display: grid; gap: 14px;
+         grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+  .card { background: var(--panel); border: 1px solid var(--line);
+          border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
+  .shot { position: relative; aspect-ratio: 16/9; background: #0a0c10; }
+  .shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .shot .none { position: absolute; inset: 0; display: flex; align-items: center;
+                justify-content: center; color: var(--dim); font-size: 12px; }
+  .badge { position: absolute; top: 8px; left: 8px; font-size: 11px;
+           padding: 2px 7px; border-radius: 999px; background: rgba(0,0,0,.6);
+           border: 1px solid var(--line); }
+  .body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 10px; }
+  .row { display: flex; align-items: center; gap: 8px; }
+  .row .grow { flex: 1; }
+  .name { font-weight: 600; }
+  .sub { color: var(--dim); font-size: 12px; }
+  .pad { display: grid; grid-template-columns: repeat(3, 42px);
+         grid-template-rows: repeat(3, 42px); gap: 6px; justify-content: start; }
+  .pad button { padding: 0; font-size: 15px; }
+  .pad .mid { background: #12151b; color: var(--dim); }
+  .hint { color: var(--dim); font-size: 11px; }
+  dialog { border: 1px solid var(--line); background: var(--panel); color: var(--text);
+           border-radius: 14px; padding: 0; width: min(760px, 94vw); }
+  dialog::backdrop { background: rgba(0,0,0,.7); }
+  .dlg-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px;
+              border-bottom: 1px solid var(--line); }
+  .dlg-body { padding: 12px 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+  iframe { width: 100%; aspect-ratio: 16/9; border: 1px solid var(--line);
+           border-radius: 10px; background: #000; }
+  .warnbox { border: 1px solid #4a3c1d; background: #241d0f; color: #e8c877;
+             padding: 10px 12px; border-radius: 10px; font-size: 12.5px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>InstaVision</h1>
+  <span id="health" class="chip">…</span>
+  <span id="counts" class="chip">…</span>
+  <span class="grow"></span>
+  <button id="refresh">Refresh</button>
+</header>
+<main id="grid"></main>
+
+<dialog id="live">
+  <div class="dlg-head">
+    <strong id="live-title">Live</strong>
+    <span id="live-state" class="chip">…</span>
+    <span class="grow" style="flex:1"></span>
+    <button id="live-close">Close</button>
+  </div>
+  <div class="dlg-body">
+    <div id="live-note" class="warnbox" hidden></div>
+    <iframe id="live-frame" allow="autoplay; fullscreen"></iframe>
+    <div class="hint" id="live-hint"></div>
+  </div>
+</dialog>
+
+<script>
+const $ = (s, r = document) => r.querySelector(s);
+let state = { cameras: [], relay: {} };
+let refreshTimer = null;
+let liveTimer = null;
+
+function fmtAge(s) {
+  if (s == null) return "—";
+  if (s < 60) return Math.round(s) + "s";
+  if (s < 3600) return Math.round(s / 60) + " min";
+  return (s / 3600).toFixed(1) + " h";
+}
+
+async function getJSON(url, opts) {
+  const r = await fetch(url, opts);
+  const text = await r.text();
+  let data = null;
+  try { data = JSON.parse(text); } catch (e) { data = { error: text.slice(0, 200) }; }
+  if (!r.ok && !data.error) data.error = "HTTP " + r.status;
+  return data;
+}
+
+async function ptz(name, pan, tilt, nonStop) {
+  const res = await getJSON("/api/ptz/" + encodeURIComponent(name), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pan: pan, tilt: tilt, nonStop: nonStop })
+  });
+  return res;
+}
+
+async function ptzStop(name) {
+  return getJSON("/api/ptz/" + encodeURIComponent(name) + "/stop", { method: "POST" });
+}
+
+function card(cam) {
+  const el = document.createElement("article");
+  el.className = "card";
+  const streaming = cam.state === "streaming";
+  const badge = streaming ? "LIVE" : (cam.online ? "snapshot" : "offline");
+  const badgeColor = streaming ? "var(--ok)" : (cam.online ? "var(--dim)" : "var(--bad)");
+  el.innerHTML = `
+    <div class="shot">
+      <img alt="" src="/api/snapshot/${encodeURIComponent(cam.name)}?t=${Date.now()}"
+           onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+      <div class="none" style="display:none">no snapshot</div>
+      <span class="badge" style="color:${badgeColor}">${badge}</span>
+    </div>
+    <div class="body">
+      <div class="row">
+        <span class="name">${cam.name}</span>
+        <span class="grow"></span>
+        <span class="sub">${cam.ip || ""} ${cam.ptz ? "· PTZ" : ""}</span>
+      </div>
+      <div class="row">
+        <div class="pad">
+          <span></span><button data-move="up">▲</button><span></span>
+          <button data-move="left">◀</button>
+          <button class="mid" data-stop="1">■</button>
+          <button data-move="right">▶</button>
+          <span></span><button data-move="down">▼</button><span></span>
+        </div>
+        <div class="grow"></div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <button data-live="1">Live</button>
+          <button data-snap="1">Snapshot</button>
+        </div>
+      </div>
+      <div class="hint" data-note="1">${cam.state_detail || ""}</div>
+    </div>`;
+
+  const step = 300;
+  const moves = {
+    up:    { pan: 0,     tilt: step },
+    down:  { pan: 0,     tilt: -step },
+    left:  { pan: step,  tilt: 0 },
+    right: { pan: -step, tilt: 0 }
+  };
+  el.querySelectorAll("[data-move]").forEach(btn => {
+    btn.onclick = async () => {
+      const m = moves[btn.dataset.move];
+      const note = el.querySelector('[data-note="1"]');
+      note.textContent = "moving…";
+      const res = await ptz(cam.name, m.pan, m.tilt, false);
+      note.textContent = res.error ? ("PTZ failed: " + res.error)
+                                   : "PTZ sent · " + new Date().toLocaleTimeString();
+    };
+  });
+  el.querySelector("[data-stop]").onclick = async () => {
+    const note = el.querySelector('[data-note="1"]');
+    const res = await ptzStop(cam.name);
+    note.textContent = res.error ? ("stop failed: " + res.error) : "stopped";
+  };
+  el.querySelector("[data-snap]").onclick = () => {
+    const img = el.querySelector("img");
+    img.style.display = "block";
+    img.src = "/api/snapshot/" + encodeURIComponent(cam.name) + "?t=" + Date.now();
+  };
+  el.querySelector("[data-live]").onclick = () => openLive(cam);
+  return el;
+}
+
+function render() {
+  const grid = $("#grid");
+  grid.innerHTML = "";
+  for (const cam of state.cameras) grid.appendChild(card(cam));
+  const relay = state.relay || {};
+  const health = $("#health");
+  if (relay.idle) { health.textContent = "relay idle"; health.className = "chip warn"; }
+  else if (relay.ok) { health.textContent = "relay healthy"; health.className = "chip ok"; }
+  else if (!relay.streaming) {
+    health.textContent = "waiting for cameras"; health.className = "chip";
+  } else { health.textContent = "relay degraded"; health.className = "chip warn"; }
+  $("#counts").textContent =
+    `${state.cameras.filter(c => c.online).length}/${state.cameras.length} online · ` +
+    `${relay.streaming || 0} streaming`;
+}
+
+async function load() {
+  state = await getJSON("/api/status");
+  render();
+}
+
+function openLive(cam) {
+  const dlg = $("#live");
+  $("#live-title").textContent = cam.name + " · live";
+  const frame = $("#live-frame");
+  const note = $("#live-note");
+  const hint = $("#live-hint");
+  frame.src = cam.live_url || "about:blank";
+  if (cam.state === "streaming") {
+    note.hidden = true;
+    $("#live-state").textContent = "streaming";
+    $("#live-state").className = "chip ok";
+  } else {
+    note.hidden = false;
+    note.textContent = cam.state_detail ||
+      "This camera is not publishing to its cloud channel, so there is nothing to show yet.";
+    $("#live-state").textContent = cam.state || "idle";
+    $("#live-state").className = "chip warn";
+  }
+  hint.textContent = "Opens the MediaMTX player on port 8909. It appears the moment the camera publishes.";
+  dlg.showModal();
+  clearInterval(liveTimer);
+  liveTimer = setInterval(async () => {
+    const s = await getJSON("/api/status");
+    const c = (s.cameras || []).find(x => x.name === cam.name);
+    if (!c) return;
+    if (c.state === "streaming" && !frame.src.includes("/insta_")) {
+      frame.src = c.live_url;
+      $("#live-state").textContent = "streaming";
+      $("#live-state").className = "chip ok";
+      note.hidden = true;
+    }
+    if (c.state !== "streaming") {
+      $("#live-state").textContent = c.state || "idle";
+      $("#live-state").className = "chip warn";
+    }
+  }, 5000);
+}
+
+$("#live-close").onclick = () => {
+  clearInterval(liveTimer);
+  $("#live-frame").src = "about:blank";
+  $("#live").close();
+};
+$("#refresh").onclick = load;
+load();
+refreshTimer = setInterval(load, 15000);
+</script>
+</body>
+</html>
