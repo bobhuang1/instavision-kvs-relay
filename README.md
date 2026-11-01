@@ -112,12 +112,50 @@ creates it for you instead.
 
 One host, two checkouts: the compose project is named `instavision-relay`, so a second
 clone on the same machine does not run beside the first — `docker compose up` there
-**recreates the first one's containers** with the second checkout's files. For a parallel
-copy (a test rig next to a live one) set a different project and non-overlapping ports:
+**recreates the first one's containers** with the second checkout's files. A different
+project name alone is not enough for a parallel copy: MediaMTX's addresses are literals in
+`mediamtx.yml` and `compose.yaml`, so a second stack on the same host dies immediately with
+`ERR listen udp :8100: bind: address already in use` (measured 2026-10-31). Give the copy
+its own MediaMTX config and point the gateway at it:
+
+```yaml
+# compose.test.yml - run with: docker compose -f compose.yaml -f compose.test.yml ...
+services:
+  mediamtx:
+    volumes:
+      - ./mediamtx.test.yml:/mediamtx.yml:ro
+  gateway:
+    environment:
+      INSTAVISION_RTSP_BASE: rtsp://127.0.0.1:8674
+      INSTAVISION_RELAY_STATUS_PORT: "8676"
+      INSTAVISION_UI_PORT: "8675"
+      INSTAVISION_WEBRTC_BASE: http://127.0.0.1:8919
+      INSTAVISION_HLS_BASE: http://127.0.0.1:8918
+```
+
+`mediamtx.test.yml` is `mediamtx.yml` with `rtspAddress: :8674`, `apiAddress:
+127.0.0.1:9990`, `rtpAddress: :8110`, `rtcpAddress: :8111`, `hlsAddress: :8918`,
+`webrtcAddress: :8919` and `webrtcLocalUDPAddress: :8290`. Then:
 
 ```bash
-COMPOSE_PROJECT_NAME=iv-test INSTAVISION_UI_PORT=8666 docker compose up -d
+COMPOSE_PROJECT_NAME=iv-test INSTAVISION_UI_PORT=8675 \
+  docker compose -f compose.yaml -f compose.test.yml up -d
 ```
+
+Verified on 2026-10-31 beside a live relay: the test stack came up on 8674/8675/8918/8919
+with the live one still holding 8574/8665/8908/8909, `selftest.py` passed against it, and
+an RTSP read over the LAN address returned `h264 640x360 15/1` while HLS served the same
+path. Note that the gateway still needs a working account sign-in; without one it exits 3
+with `could not sign in`, and `restart: always` turns that into a restart loop until `.env`
+is filled in.
+
+**Known gap on a shifted copy:** the 🔗 Streams & ports tab and `GET /api/streams` print
+the *default* ports — `rtsp://…:8574`, `:8908`, `:8909` — because those strings are
+literals in `gateway.py`, not derived from `INSTAVISION_RTSP_BASE`/`_HLS_BASE`/`_WEBRTC_BASE`.
+Measured on the run above: the copy answered on 8674/8918/8919 and still reported
+8574/8908/8909. The streams worked; only the displayed addresses and the generated Frigate
+YAML were wrong, so on a shifted copy use your own ports there rather than the ones the
+page prints.
 
 `--list` shows what the account holds (the profile keeps this from starting a second
 set of streaming sessions):
