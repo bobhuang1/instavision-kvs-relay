@@ -292,7 +292,23 @@ class CameraWorker:
         )
         publisher = RtspPublisher(self.name, self.relay.rtsp_base,
                                   self.relay.ffmpeg)
-        viewer.encoded_sink = publisher.write
+        # "streaming" has to be earned. This used to be set below, the moment the
+        # publisher started, which is how all twelve cameras reported state=streaming
+        # with frames=0 while KVS held no master and not one byte arrived - the
+        # status API claiming cameras publish when they do not. The first encoded
+        # frame flips it now, and every frame refreshes last_frame_age so a stream
+        # that stalls mid-session is visible instead of reading as fresh.
+        def sink(data: bytes) -> bool:
+            # Counted here, not once at session end: `frames` used to stay 0 for the
+            # whole session, so the gateway's live badge (`state == streaming and
+            # frames > 0`) would not light up even on a camera that really was
+            # streaming. One frame, one count.
+            self.frames += 1
+            self.state = "streaming"
+            self.last_frame_age = time.time()
+            return publisher.write(data)
+
+        viewer.encoded_sink = sink
 
         def on_codec(codec: str | None) -> None:
             """Start ffmpeg once the answer says which codec is coming.
@@ -314,7 +330,9 @@ class CameraWorker:
 
         viewer.on_codec = on_codec
         self.started_at = time.time()
-        self.state = "streaming"
+        # Not "streaming" yet: the offer is out and the session is open, but nothing
+        # has arrived. `sink` promotes it when the first frame lands.
+        self.state = "waiting"
 
         try:
             # The worker's stop event, so a shutdown does not wait out the session
@@ -323,9 +341,6 @@ class CameraWorker:
                              stop_event=self._stop)
         finally:
             publisher.stop()
-            self.frames += viewer.forwarded
-            if viewer.forwarded:
-                self.last_frame_age = time.time()
             if viewer.error:
                 self.last_error = viewer.error
             elif publisher.last_error:
