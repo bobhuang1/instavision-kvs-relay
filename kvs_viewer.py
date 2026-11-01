@@ -127,6 +127,17 @@ def presign_wss(endpoint: str, region: str, creds: dict, channel_arn: str,
 # --- the viewer -------------------------------------------------------------
 
 
+def note(client_id: str, message: str) -> None:
+    """Signalling events worth printing unconditionally.
+
+    `KvsViewer.log` is gated on --verbose, which the gateway never passes, so
+    anything sent through it is invisible in the running stack. These are the
+    lines that explain a silent camera - an answer, a GO_AWAY, a close code -
+    and they have to survive that flag to be useful.
+    """
+    print(f"   [kvs {client_id}] {message}", flush=True)
+
+
 class _TapBuffer:
     """Jitter buffer wrapper that copies each complete frame to the sink."""
 
@@ -161,6 +172,13 @@ class KvsViewer:
         # Set by the relay: called with each complete H.264 access unit, already
         # in Annex-B form, so it can be published without decoding anything.
         self.encoded_sink = None
+        # Set by the relay: called once, when the answer names the video codec,
+        # so the publisher can pick its demuxer before ffmpeg starts. The codec is
+        # NOT assumed to be H.264: a camera that answers VP8 or H.265 would
+        # otherwise be fed to ffmpeg as Annex-B H.264, which is exactly what
+        # "Could not find codec parameters ... unspecified size" looks like.
+        self.on_codec = None
+        self.video_codec: str | None = None
         self.forwarded = 0
         self.pc: RTCPeerConnection | None = None
         self.ws = None
@@ -272,7 +290,17 @@ class KvsViewer:
                 {"type": "offer", "sdp": self.pc.localDescription.sdp},
             )
             self.log("offer sent")
-            await self.pump()
+            try:
+                await self.pump()
+            except websockets.exceptions.ConnectionClosed as exc:
+                # The service closes with a code for "no master in the channel",
+                # a rejected offer, an expired channel and so on. Catching this is
+                # the difference between "the camera did not answer" and knowing
+                # *why*: with the exception unhandled, every close looked like a
+                # quiet session that simply timed out.
+                self.error = (f"signalling closed ({exc.code}"
+                              f"{': ' + exc.reason if getattr(exc, 'reason', '') else ''})")
+                note(self.client_id, self.error)
 
     async def send(self, message_type: str, payload: dict):
         """Send one signalling message.
@@ -302,6 +330,14 @@ class KvsViewer:
             sender = msg.get("senderClientId")
             raw_payload = msg.get("messagePayload") or ""
             self.log("recv", message_type, "from", sender)
+            if message_type not in ("STATUS_RESPONSE", "ICE_CANDIDATE"):
+                # Unconditional on purpose (the gateway never passes --verbose):
+                # a GO_AWAY or an error from the service is the only thing that
+                # explains a camera which never answers, and it was invisible.
+                note(self.client_id, f"signalling <- {message_type or 'unknown'}"
+                     f" from {sender or '-'}")
+                if message_type == "GO_AWAY":
+                    self.error = "service sent GO_AWAY"
 
             try:
                 data = json.loads(base64.b64decode(raw_payload).decode()) \
@@ -317,6 +353,13 @@ class KvsViewer:
                     type("D", (), {"type": "answer", "sdp": sdp})()
                 )
                 self.answered.set()
+                self.video_codec = self.negotiated_video_codec(sdp)
+                self.log("negotiated video codec:", self.video_codec)
+                # Before the tap: the publisher has to be running with the right
+                # demuxer before the first access unit arrives, or that first
+                # frame is written into nothing and ffmpeg starts mid-GOP.
+                if self.on_codec is not None:
+                    self.on_codec(self.video_codec)
                 self.install_tap()
             elif message_type == "ICE_CANDIDATE":
                 self.master_id = sender or self.master_id
@@ -335,6 +378,37 @@ class KvsViewer:
                     )
             elif message_type == "STATUS_RESPONSE":
                 self.log("status:", data)
+
+    @staticmethod
+    def negotiated_video_codec(sdp: str) -> str | None:
+        """The answer's first video codec, e.g. 'h264', 'vp8', 'h265'.
+
+        Read from the SDP rather than from aiortc's receiver internals: the answer
+        is what the camera agreed to send, it survives library upgrades, and it is
+        the same string the publisher needs to map onto an ffmpeg demuxer.
+        """
+        rtpmap: dict[str, str] = {}
+        payloads: list[str] = []
+        in_video = False
+        for line in (sdp or "").splitlines():
+            line = line.strip()
+            if line.startswith("m="):
+                in_video = line.startswith("m=video")
+                if in_video:
+                    # m=video <port> <proto> <pt> <pt> ...
+                    payloads = line.split()[3:]
+                continue
+            if in_video and line.startswith("a=rtpmap:"):
+                pt, _, encoding = line[len("a=rtpmap:"):].partition(" ")
+                name = encoding.split("/")[0].strip().lower()
+                if name:
+                    rtpmap[pt] = name
+        for pt in payloads:
+            if pt in rtpmap:
+                return rtpmap[pt]
+        # Some stacks list rtpmap before the m-line is complete; fall back to the
+        # first one seen rather than reporting nothing.
+        return next(iter(rtpmap.values()), None)
 
     def install_tap(self) -> None:
         """Forward encoded frames without decoding them.

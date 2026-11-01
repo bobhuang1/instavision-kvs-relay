@@ -408,6 +408,15 @@ fails with a clear message and exit code 2 rather than inventing a number.
 | [`ui.html`](ui.html) | The tabbed page — plain HTML/CSS/JS, no build step. |
 | [`login.html`](login.html) | Sign-in and first-run administrator. |
 
+Signalling is not silent any more. Everything inbound used to go through
+`KvsViewer.log`, which is gated on `--verbose` — a flag the gateway never passes — so
+a GO_AWAY, a refusal or a socket close was invisible in the running stack and every
+failure read as `no SDP answer (camera is not publishing)`. Answers, GO_AWAYs, close
+codes and any non-routine message type now print unconditionally (`[kvs <client>] …`),
+and a closed socket is recorded as `signalling closed (code: reason)` on the session.
+A camera that answers nobody therefore leaves a record saying so, instead of looking
+like a timeout.
+
 ## Limitations
 
 * **The camera must already be publishing.** See "What is and is not proven". The
@@ -421,7 +430,16 @@ fails with a clear message and exit code 2 rather than inventing a number.
   any number of viewers, but a camera's uplink and viewer slots are finite. The
   relay is another viewer alongside your phone, so expect contention if you
   watch the same camera in the app while it is enrolled here.
-* **Video only, H.264 only.** No audio, no re-encode.
+* **Video only; H.264 in practice.** No audio, no re-encode. The pipe demuxer is
+  no longer assumed: `relay.py` asks the SDP answer what the camera agreed to send
+  and starts ffmpeg with `-f h264` or `-f hevc` accordingly, refusing a codec it
+  cannot copy as Annex-B (VP8/VP9/AV1) with a named error instead of feeding those
+  bytes to the H.264 parser, which only ever produced `unspecified size` and a
+  zero-frame session. What that refusal can catch today is narrow: aiortc 1.15
+  offers H.264 and VP8 for video and has no H.265 support, so an H.265-only camera
+  is rejected during negotiation rather than reaching the publisher. The mapping
+  matters the moment that changes, and it makes the negotiated codec visible in
+  the session log (`codec=h264 fmt=h264`).
 * **Credentials expire in about five minutes**, so they are fetched per attempt
   rather than cached; an established WebRTC session survives past that.
 * **Not official.** This is an independent, reverse-engineered client of a

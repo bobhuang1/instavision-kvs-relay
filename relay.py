@@ -89,17 +89,30 @@ def slugify(name: str) -> str:
     return f"insta_{slug}"
 
 
+# Codec name in an SDP answer -> ffmpeg demuxer for a raw elementary stream.
+# Only Annex-B codecs belong here: this relay copies compressed access units, it
+# never repacketises. VP8/VP9/AV1 arrive RTP-framed and cannot be `-c copy`d onto
+# a byte pipe, so they are refused by name instead of being fed to ffmpeg as
+# H.264 - which only produces "unspecified size" and a silent zero-frame session.
+PIPE_FORMATS = {"h264": "h264", "h265": "hevc", "hevc": "hevc"}
+
+
 class RtspPublisher:
-    """Publish an Annex-B H.264 byte stream to MediaMTX over RTSP.
+    """Publish an Annex-B H.264/H.265 byte stream to MediaMTX over RTSP.
 
     ffmpeg does the RTSP handshake and RTP packetisation with `-c copy`, so this
     class only has to keep its stdin fed. Writes happen on a dedicated thread:
     ffmpeg can stall (a MediaMTX restart closes the socket), and doing that on the
     event loop would freeze every camera's signalling at once.
+
+    The demuxer is chosen from the codec the camera actually negotiated (see
+    `start(codec)`), defaulting to H.264 for the standalone CLI and the load
+    harness, which synthesise H.264 themselves.
     """
 
     def __init__(self, name: str, rtsp_base: str, ffmpeg: str = "ffmpeg"):
         self.name = name
+        self.format = "h264"
         self.url = f"{rtsp_base.rstrip('/')}/{slugify(name)}"
         self.ffmpeg = ffmpeg
         self.proc: subprocess.Popen | None = None
@@ -109,10 +122,19 @@ class RtspPublisher:
         self.written = 0
         self.last_error = ""
 
-    def start(self) -> bool:
+    def start(self, codec: str | None = "h264") -> bool:
+        """Start ffmpeg with the demuxer that matches the negotiated codec."""
+        fmt = PIPE_FORMATS.get((codec or "").lower())
+        if fmt is None:
+            self.last_error = (
+                f"negotiated {codec or 'no codec'}: this relay copies Annex-B "
+                f"H.264/H.265 only (got an RTP-framed or unknown codec)"
+            )
+            return False
+        self.format = fmt
         cmd = [
             self.ffmpeg, "-hide_banner", "-loglevel", "warning", "-nostdin",
-            "-fflags", "+genpts", "-f", "h264", "-i", "pipe:0",
+            "-fflags", "+genpts", "-f", fmt, "-i", "pipe:0",
             "-c", "copy", "-an",
             "-f", "rtsp", "-rtsp_transport", "tcp", self.url,
         ]
@@ -127,7 +149,7 @@ class RtspPublisher:
         self.thread = threading.Thread(target=self._pump, name=f"pub-{self.name}",
                                        daemon=True)
         self.thread.start()
-        log(self.name, f"publishing to {self.url}")
+        log(self.name, f"publishing to {self.url} (codec={codec}, -f {fmt})")
         return True
 
     def _pump(self) -> None:
@@ -270,11 +292,27 @@ class CameraWorker:
         )
         publisher = RtspPublisher(self.name, self.relay.rtsp_base,
                                   self.relay.ffmpeg)
-        if not publisher.start():
-            self.last_error = publisher.last_error
-            return False
-
         viewer.encoded_sink = publisher.write
+
+        def on_codec(codec: str | None) -> None:
+            """Start ffmpeg once the answer says which codec is coming.
+
+            Starting it earlier would mean guessing the demuxer: with `-f h264`
+            hardcoded, an H.265 camera's access units are parsed as H.264 and
+            ffmpeg fails with "Could not find codec parameters ... unspecified
+            size" while the relay reports zero frames and no reason.
+            """
+            if codec is None:
+                viewer.error = "answer has no video codec"
+                viewer.done.set()
+                return
+            if not publisher.start(codec):
+                viewer.error = publisher.last_error
+                # Nothing can be published in this session, so end it now rather
+                # than holding a viewer offer open for ten minutes.
+                viewer.done.set()
+
+        viewer.on_codec = on_codec
         self.started_at = time.time()
         self.state = "streaming"
 
@@ -297,6 +335,8 @@ class CameraWorker:
         log(self.name, f"session ended after {time.time() - self.started_at:.0f}s: "
                        f"frames={viewer.forwarded} bytes_out={publisher.written} "
                        f"dropped={publisher.dropped}"
+                       + (f" codec={viewer.video_codec} fmt={publisher.format}"
+                          if viewer.video_codec else " codec=none")
                        + (f" err={self.last_error}" if self.last_error else ""))
         return viewer.forwarded >= MIN_FRAMES_FOR_SUCCESS
 
