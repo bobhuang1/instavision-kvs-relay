@@ -174,6 +174,14 @@
 const $ = (sel) => document.querySelector(sel);
 const state = { cameras: [], streams: null, tab: "viewer", pcs: new Map(), retry: null };
 // Values like "rtsp://host:8574/<path>" must not be parsed as HTML.
+// How long ago a still was captured, short enough for a badge: "7m", "4h", "3d".
+const ago = (seconds) => {
+  if (seconds == null) return "";
+  if (seconds < 3600) return Math.max(1, Math.round(seconds / 60)) + "m";
+  if (seconds < 86400) return Math.round(seconds / 3600) + "h";
+  return Math.round(seconds / 86400) + "d";
+};
+
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>]/g,
   (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 
@@ -270,8 +278,19 @@ function tile(cam) {
 
   function setBadge() {
     const c = state.cameras.find(x => x.name === cam.name) || cam;
-    if (c.state === "live") { badge.textContent = "LIVE"; badge.style.color = "var(--ok)"; }
-    else if (c.online) { badge.textContent = "snapshot"; badge.style.color = "var(--dim)"; }
+    if (c.state === "live") { badge.textContent = "LIVE"; badge.style.color = "var(--ok)";
+      badge.title = "live video from the relay"; }
+    else if (c.online) {
+      // "snapshot" alone hid the real problem: this is a still the camera
+      // uploaded hours or days ago, not a frozen feed, so it carries its age.
+      const age = c.snapshot_at ? Date.now() / 1000 - c.snapshot_at : null;
+      badge.textContent = age == null ? "snapshot" : "still " + ago(age);
+      badge.title = c.snapshot_at
+        ? "Cloud still captured " + new Date(c.snapshot_at * 1000).toLocaleString()
+          + " - not live video"
+        : "Latest cloud still - not live video";
+      badge.style.color = "var(--dim)";
+    }
     else { badge.textContent = "offline"; badge.style.color = "var(--bad)"; }
   }
   setBadge();
@@ -296,7 +315,15 @@ function tile(cam) {
       const [pan, tilt] = moves[btn.dataset.move];
       const res = await post(`/api/ptz/${encodeURIComponent(cam.name)}`,
                              { pan, tilt, nonStop: false });
-      if (!res.ok) badge.textContent = "PTZ failed";
+      if (!res.ok) { badge.textContent = "PTZ failed"; return; }
+      // The camera turns; the still cannot. Fetch the newest upload and say so,
+      // rather than leaving the old picture looking like a feed that ignores PTZ.
+      img.src = cam.snapshot + "?t=" + Date.now();
+      if (cam.state !== "live") {
+        badge.textContent = "PTZ sent";
+        badge.title = "Move sent. This tile shows a cloud still, so the picture "
+          + "only changes when the camera uploads a new one.";
+      }
     };
   });
   const stopBtn = el.querySelector("[data-stop]");
@@ -338,7 +365,9 @@ function renderViewer() {
   if (enrolled.length && !live) {
     note.hidden = false;
     note.textContent = "No camera is publishing right now, so the tiles show each camera's "
-      + "latest cloud snapshot. A tile switches to video by itself the moment its camera streams.";
+      + "latest cloud still - the badge says how old it is, and some are days old. "
+      + "PTZ still moves the camera, but a stored picture cannot show it. "
+      + "A tile switches to video by itself the moment its camera streams.";
   } else {
     note.hidden = true;
   }

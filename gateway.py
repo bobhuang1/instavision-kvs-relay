@@ -43,6 +43,7 @@ exists yet.
 from __future__ import annotations
 
 import base64
+import datetime as dt
 import hashlib
 import hmac
 import importlib.util
@@ -259,6 +260,26 @@ class Auth:
 
 # --- vendor API with a cached device list -----------------------------------
 
+# The vendor's still is a JPEG the camera uploaded to Backblaze B2, and the
+# signed download token records when: `Authorization=3_20261028043233_...`. That
+# is the only capture time the API exposes, so it is the age the UI shows -
+# without it a four-day-old still reads as a frozen live feed.
+_SNAP_TOKEN = re.compile(r"Authorization=3_(\d{14})_")
+
+
+def snapshot_captured_at(device: dict) -> float | None:
+    """When the stored still was uploaded, as epoch seconds (UTC), or None."""
+    for snap in (device.get("device_state") or {}).get("snapshots") or []:
+        match = _SNAP_TOKEN.search(snap.get("url") or "")
+        if not match:
+            continue
+        try:
+            return dt.datetime.strptime(match.group(1), "%Y%m%d%H%M%S").replace(
+                tzinfo=dt.timezone.utc).timestamp()
+        except ValueError:
+            continue
+    return None
+
 
 class Cameras:
     def __init__(self) -> None:
@@ -357,6 +378,11 @@ class Cameras:
             return False, str(exc.reason)[:120]
         if raw is None:
             return False, "no answer from the vendor API"
+        # A move cannot change the stored still - it only changes once the camera
+        # uploads a new one - but dropping the cached copy means the next refresh
+        # fetches the newest upload instead of a copy from up to 30 s ago.
+        with self._lock:
+            self._snapshots.pop(name, None)
         return True, "sent"
 
 
@@ -721,6 +747,9 @@ class Handler(BaseHTTPRequestHandler):
                 "webrtc": f"http://{host}:{WEBRTC_PORT}/{slug(name)}/",
                 "whep": f"/whep/{quote(name)}",
                 "snapshot": f"/api/snapshot/{quote(name)}",
+                # When the cloud still was uploaded, so the tile can say how old
+                # the picture is instead of presenting it as the camera's view.
+                "snapshot_at": snapshot_captured_at(device),
             })
         cameras.sort(key=lambda c: c["name"])
         return cameras
