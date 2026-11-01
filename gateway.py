@@ -138,11 +138,29 @@ class Auth:
                 return data
         except OSError:
             pass
-        os.makedirs(STATE_DIR, exist_ok=True)
         secret = secrets.token_bytes(32)
-        with open(SECRET_FILE, "wb") as handle:
-            handle.write(secret)
-        os.chmod(SECRET_FILE, 0o600)
+        try:
+            os.makedirs(STATE_DIR, exist_ok=True)
+            with open(SECRET_FILE, "wb") as handle:
+                handle.write(secret)
+            os.chmod(SECRET_FILE, 0o600)
+        except PermissionError as exc:
+            # A fresh clone that was mounted before ./state existed leaves Docker
+            # creating it as root:root, while compose runs this process as
+            # $INSTAVISION_UID. A restart loop of tracebacks hides that; say what
+            # to do instead. See the state note in README "Quick start".
+            owner = "unknown"
+            try:
+                owner = str(os.stat(STATE_DIR).st_uid)
+            except OSError:
+                pass
+            raise SystemExit(
+                f"\n[state] cannot write {SECRET_FILE}: {exc}\n"
+                f"[state] this process runs as uid {os.getuid()}:{os.getgid()}, "
+                f"{STATE_DIR} is owned by uid {owner}.\n"
+                f"[state] either set INSTAVISION_UID/INSTAVISION_GID in .env to your "
+                f"own ids (`id -u`, `id -g`) or make that directory writable by them.\n"
+            ) from exc
         return secret
 
     # --- account ---------------------------------------------------------

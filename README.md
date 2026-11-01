@@ -72,11 +72,24 @@ and watch for `insta_<name>` to appear.
 
 ## Quick start
 
+What it needs: Linux with Docker and compose v2, and these host ports free — **8574**,
+**8908**, **8909**, **9998**, **8665**, **8656**. `ffmpeg` ships inside the image, so
+running the stack needs nothing else on the host; the optional self-test below is the one
+part that runs on the host and needs `ffmpeg` there. The cameras themselves need nothing:
+they are reached through the vendor cloud.
+
 ```bash
 git clone https://github.com/bobhuang1/instavision-kvs-relay.git
 cd instavision-kvs-relay
 cp .env.example .env      # then fill in the three values below
 ```
+
+`state/` arrives with the clone and must stay: it is bind-mounted into the gateway, which
+runs as `${INSTAVISION_UID}:${INSTAVISION_GID}` (default `1000:1000`) so the files it
+writes belong to you. If that directory is missing, Docker creates it as `root` and the
+gateway exits with `[state] cannot write …/state/session.key` instead of starting — the
+fix is one line, either `mkdir -p state` as yourself or set `INSTAVISION_UID`/`INSTAVISION_GID`
+in `.env` to `id -u` / `id -g`.
 
 Fill in `.env`:
 
@@ -88,18 +101,30 @@ Fill in `.env`:
 
 ```bash
 docker compose up -d
-docker compose logs -f gateway
+docker compose logs -f gateway     # Ctrl-C stops the logs, not the stack
 ```
 
-That starts MediaMTX and the gateway, which serves the UI on port 8665 and runs the
-relay inside itself, so the UI and the RTSP paths cannot drift apart. Open
-`http://<host>:8665/`.
+That builds the image, starts MediaMTX and the gateway, which serves the UI on port 8665
+and runs the relay inside itself, so the UI and the RTSP paths cannot drift apart. Open
+`http://<host>:8665/`. The first visit asks you to create the administrator (username,
+password, optional hint); setting `INSTAVISION_UI_PASSWORD` before the first start
+creates it for you instead.
+
+One host, two checkouts: the compose project is named `instavision-relay`, so a second
+clone on the same machine does not run beside the first — `docker compose up` there
+**recreates the first one's containers** with the second checkout's files. For a parallel
+copy (a test rig next to a live one) set a different project and non-overlapping ports:
+
+```bash
+COMPOSE_PROJECT_NAME=iv-test INSTAVISION_UI_PORT=8666 docker compose up -d
+```
 
 `--list` shows what the account holds (the profile keeps this from starting a second
 set of streaming sessions):
 
 ```bash
-docker compose run --rm --profile relay relay python3 relay.py --list
+# --profile goes before `run`: it is a flag of `docker compose`, not of `run`.
+docker compose --profile relay run --rm relay python3 relay.py --list
 ```
 
 Publishing is deliberately an allowlist: an empty `INSTAVISION_ENROLLED` means the
@@ -236,7 +261,10 @@ Exit codes: `0` clean, `1` login or config failure, `3` incomplete `.env`.
 
 ## Self-test
 
-Proves everything after the media arrives, with no camera involved:
+Proves everything after the media arrives, with no camera involved. This is the one part
+that runs on the **host**, not in a container, so it needs Python 3.11+ with `venv` and
+`ffmpeg`/`ffprobe` on `PATH` — it exits `2` naming the missing binary rather than
+pretending to pass:
 
 ```bash
 docker compose up -d mediamtx

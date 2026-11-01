@@ -1,8 +1,15 @@
 # Secrets - the relay signs in to a real account with these
 .env
 
-# Runtime state (status logs, captured frames, session data)
-state/
+# Runtime state (status logs, captured frames, session data).
+#
+# The directory itself is tracked (empty, via .gitkeep) on purpose: compose
+# bind-mounts ./state and runs the gateway as ${INSTAVISION_UID}, so a clone has
+# to arrive with that directory already owned by the person cloning it. If it is
+# missing, Docker creates it as root:root at `docker compose up` and the gateway
+# crash-loops with "Permission denied: /app/state/session.key".
+state/*
+!state/.gitkeep
 
 # Load-test output
 loadtest.json
