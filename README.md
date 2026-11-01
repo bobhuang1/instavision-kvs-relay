@@ -37,7 +37,7 @@ InstaVision app account
 | --- | --- | --- |
 | Vendor login, per-camera credentials, KVS signalling | Works | Fetches real credentials for every device on the account |
 | **Republish path** (WebRTC H.264 -> ffmpeg -> RTSP -> MediaMTX) | **Works** | [`selftest.py`](selftest.py): a generated 640×360 clip is pushed through the real publisher classes and read back off MediaMTX as `h264 640x360 15/1`, decoded frame for frame |
-| **Camera capture** (a camera actually publishing when we join) | **Not proven** | On this account, no camera answered an offer: no SDP answer, and not a single message back from AWS on any of the twelve channels |
+| **Camera capture** (a camera actually publishing when we join) | **Not proven** | On this account, no camera answered an offer: an 8-camera sweep, then a viewer offer held open on one camera for ten minutes, both produced no SDP answer, no `recv` of any kind from AWS, and no RTSP path — see [`selftest.py`](selftest.py) for the half that does work |
 
 The relay cannot *make* a camera stream. The app's own viewer path was
 decompiled to check: it calls the same `stream-credentials` endpoint, builds the
