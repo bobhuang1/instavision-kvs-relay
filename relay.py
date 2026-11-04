@@ -38,6 +38,7 @@ import importlib.util
 import json
 import os
 import queue
+import random
 import re
 import signal
 import subprocess
@@ -69,6 +70,15 @@ BACKOFF_MAX = 60
 # A session that never produced a frame is a failure even if the offer was
 # answered, so it gets the same backoff treatment.
 MIN_FRAMES_FOR_SUCCESS = 10
+
+# probe.request already retries a hung or 5xx response, so what is left here is a
+# reply that arrives but is unusable: a null body from a session hiccup, or
+# channel_info that does not list this camera yet. Those clear on the next request
+# within seconds, and ending the session over one costs a fresh viewer, a fresh
+# ffmpeg and the 5-60 s session backoff above.
+CREDENTIAL_ATTEMPTS = max(1, int(os.environ.get("INSTAVISION_CREDENTIAL_ATTEMPTS", "3")))
+CREDENTIAL_BACKOFF_MIN = 0.75
+CREDENTIAL_BACKOFF_MAX = 8.0
 
 
 def load_module(name: str, filename: str):
@@ -262,29 +272,59 @@ class CameraWorker:
             _ = started
         self.state = "stopped"
 
+    async def _credentials(self) -> tuple[dict, dict] | None:
+        """Fetch fresh credentials and this camera's channel, redialling in place.
+
+        Retries the *response that is unusable* rather than the transport failure
+        probe.py already handles, and backs off between attempts with jitter so
+        twelve cameras waking at once do not line up behind the vendor.
+        """
+        delay = CREDENTIAL_BACKOFF_MIN
+        for attempt in range(1, CREDENTIAL_ATTEMPTS + 1):
+            if self._stop.is_set():
+                return None
+            reason = ""
+            creds = None
+            try:
+                creds = await asyncio.to_thread(
+                    self.relay.probe.request, "GET",
+                    f"atlas/spaces/{self.relay.space_id}/stream-credentials"
+                    f"?device_id={self.device_id}",
+                )
+            except Exception as exc:
+                reason = f"{type(exc).__name__}: {exc}"
+            if not reason and not isinstance(creds, dict):
+                reason = "rejected"
+            channel = None
+            if not reason:
+                channel = next(
+                    (c for c in creds.get("channel_info") or []
+                     if c.get("device_id") == self.device_id),
+                    None,
+                )
+                if channel is None:
+                    reason = "no channel for this device"
+            if channel is not None:
+                return creds, channel
+            self.last_error = f"credentials: {reason}"
+            if attempt >= CREDENTIAL_ATTEMPTS:
+                break
+            wait = min(delay * (0.75 + random.random() * 0.5), CREDENTIAL_BACKOFF_MAX)
+            log(self.name, f"credentials {reason} - retry {attempt}/"
+                           f"{CREDENTIAL_ATTEMPTS - 1} in {wait:.1f}s")
+            try:
+                await asyncio.wait_for(self._stop.wait(), timeout=wait)
+            except asyncio.TimeoutError:
+                pass
+            delay = min(delay * 2, CREDENTIAL_BACKOFF_MAX)
+        return None
+
     async def _session(self) -> bool:
         """One credential fetch + viewer session. Returns True if frames flowed."""
-        probe = self.relay.probe
-        try:
-            creds = await asyncio.to_thread(
-                probe.request, "GET",
-                f"atlas/spaces/{self.relay.space_id}/stream-credentials"
-                f"?device_id={self.device_id}",
-            )
-        except Exception as exc:
-            self.last_error = f"credentials: {type(exc).__name__}: {exc}"
+        fetched = await self._credentials()
+        if fetched is None:
             return False
-        if not isinstance(creds, dict):
-            self.last_error = "credentials rejected"
-            return False
-        channel = next(
-            (c for c in creds.get("channel_info") or []
-             if c.get("device_id") == self.device_id),
-            None,
-        )
-        if channel is None:
-            self.last_error = "no channel for this device"
-            return False
+        creds, channel = fetched
 
         viewer = self.relay.viewer_module.KvsViewer(
             creds, channel, f"relay-{slugify(self.name)}",

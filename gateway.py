@@ -260,24 +260,66 @@ class Auth:
 
 # --- vendor API with a cached device list -----------------------------------
 
-# The vendor's still is a JPEG the camera uploaded to Backblaze B2, and the
-# signed download token records when: `Authorization=3_20261028043233_...`. That
-# is the only capture time the API exposes, so it is the age the UI shows -
-# without it a four-day-old still reads as a frozen live feed.
+# The vendor's still is a JPEG the camera uploads to Backblaze B2. Two
+# timestamps sit near it and only one of them is about the picture:
+#
+#   * the download token carries a stamp (`Authorization=3_<stamp>_`), but the
+#     token is minted ONCE and then reused, so on a camera that has been up for
+#     days that stamp is days old while the JPEG behind it is minutes old. That
+#     is what made a tile read "still 4d" over a 20-minute-old picture.
+#   * B2 reports `X-Bz-Upload-Timestamp` (epoch ms) for the object itself: when
+#     this JPEG was written, which is when the camera captured it.
+#
+# So HEAD the object and trust B2. The token stamp stays as the fallback, and as
+# the only option for a device that exposes no download url at all.
 _SNAP_TOKEN = re.compile(r"Authorization=3_(\d{14})_")
+_SNAP_UPLOAD_TTL = 30.0
+_snap_upload_cache: dict[str, tuple[float, float | None]] = {}
+
+
+def _token_stamp(url: str) -> float | None:
+    match = _SNAP_TOKEN.search(url)
+    if not match:
+        return None
+    try:
+        return dt.datetime.strptime(match.group(1), "%Y%m%d%H%M%S").replace(
+            tzinfo=dt.timezone.utc).timestamp()
+    except ValueError:
+        return None
+
+
+def _upload_stamp(url: str) -> float | None:
+    """When B2 last wrote this object, i.e. when the camera uploaded the still."""
+    now = time.time()
+    cached = _snap_upload_cache.get(url)
+    if cached and now - cached[0] < _SNAP_UPLOAD_TTL:
+        return cached[1]
+    stamp = None
+    try:
+        req = urllib.request.Request(url, method="HEAD")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            raw = resp.headers.get("X-Bz-Upload-Timestamp")
+        if raw:
+            stamp = float(raw) / 1000.0
+    except Exception:
+        stamp = None
+    # A failure is cached too: one unreachable camera must not turn every
+    # /api/cameras poll into a five-second stall.
+    _snap_upload_cache[url] = (now, stamp)
+    return stamp
 
 
 def snapshot_captured_at(device: dict) -> float | None:
-    """When the stored still was uploaded, as epoch seconds (UTC), or None."""
-    for snap in (device.get("device_state") or {}).get("snapshots") or []:
-        match = _SNAP_TOKEN.search(snap.get("url") or "")
-        if not match:
+    """When the stored still was captured, as epoch seconds (UTC), or None."""
+    state = device.get("device_state") or {}
+    urls = [state.get("snapshot_url") or ""]
+    urls += [(snap or {}).get("url") or "" for snap in state.get("snapshots") or []]
+    for url in urls:
+        if not url:
             continue
-        try:
-            return dt.datetime.strptime(match.group(1), "%Y%m%d%H%M%S").replace(
-                tzinfo=dt.timezone.utc).timestamp()
-        except ValueError:
-            continue
+        stamp = _upload_stamp(url) or _token_stamp(url)
+        if stamp:
+            return stamp
     return None
 
 

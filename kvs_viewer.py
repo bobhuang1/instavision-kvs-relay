@@ -34,6 +34,7 @@ import hmac
 import importlib.util
 import json
 import os
+import random
 import sys
 import urllib.parse
 
@@ -43,6 +44,40 @@ from aiortc.mediastreams import MediaStreamError
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STUN = "stun:stun.kinesisvideo.us-west-2.amazonaws.com:443"
+
+# Signalling redial policy. The handshake is where a transient failure used to
+# end a whole session: the relay would then wait out its session backoff (5-60 s),
+# re-fetch credentials and restart ffmpeg for something a second handshake fixes.
+# Retrying in place keeps the session, the publisher and the channel slot.
+SIGNAL_ATTEMPTS = max(1, int(os.environ.get("INSTAVISION_SIGNAL_ATTEMPTS", "4")))
+SIGNAL_BACKOFF_MAX = float(os.environ.get("INSTAVISION_SIGNAL_BACKOFF_MAX", "8"))
+SIGNAL_BACKOFF_MIN = float(os.environ.get("INSTAVISION_SIGNAL_BACKOFF", "0.75"))
+# A service that hangs up on every connection would otherwise be redialled for the
+# whole answer window. After this many consecutive drops the session ends and the
+# relay's own backoff takes over, which is the slower but politer failure mode.
+SIGNAL_MAX_DROPS = max(1, int(os.environ.get("INSTAVISION_SIGNAL_MAX_DROPS", "8")))
+
+
+def signal_delay(attempt: int) -> float:
+    """Exponential backoff with jitter, so cameras do not redial in lockstep."""
+    base = min(SIGNAL_BACKOFF_MAX, SIGNAL_BACKOFF_MIN * (2 ** (attempt - 1)))
+    return base * (0.75 + random.random() * 0.5)
+
+
+def describe_connect_error(exc: BaseException) -> str:
+    """One line for a failed handshake, including the service's own body.
+
+    A rejected upgrade carries a status and a body naming the reason (expired
+    signature, wrong channel, channel gone), and that body is the only explanation
+    available - `InvalidStatus` on its own prints nothing but the status code.
+    """
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    text = f"HTTP {status}" if status is not None else f"{type(exc).__name__}: {exc}"
+    body = getattr(response, "body", None)
+    if body:
+        text += " | " + body[:200].decode(errors="replace").replace("\n", " ")
+    return text.strip()
 
 
 def load_probe():
@@ -216,14 +251,55 @@ class KvsViewer:
                 return ep["endpoint"]
         raise RuntimeError("no WSS endpoint in channel info")
 
-    async def connect(self) -> None:
-        url = presign_wss(
+    def _signalling_url(self) -> str:
+        """Presign a URL for one attempt.
+
+        Signed per attempt on purpose: an expired or clock-skewed signature is one
+        of the failures worth retrying, and replaying the exact URL that was just
+        rejected guarantees the same answer.
+        """
+        return presign_wss(
             self._endpoint(),
             self.region,
             self.creds,
             self.channel["channel_arn"],
             self.client_id,
         )
+
+    async def _open_socket(self, deadline: float | None) -> bool:
+        """Connect the signalling socket, redialling with backoff.
+
+        Returns False - with `self.error` set - once it is time to stop: the attempt
+        budget is spent, or the camera's answer window would expire while sleeping.
+        Sleeping past that window only turns "the connect failed" into "nothing
+        answered", which is the wrong diagnosis.
+        """
+        loop = asyncio.get_event_loop()
+        reason = "no attempt made"
+        for attempt in range(1, SIGNAL_ATTEMPTS + 1):
+            try:
+                self.ws = await websockets.connect(
+                    self._signalling_url(), max_size=2**22, open_timeout=20,
+                )
+            except Exception as exc:  # noqa: BLE001 - all of these are transient
+                reason = describe_connect_error(exc)
+                delay = signal_delay(attempt)
+                if attempt >= SIGNAL_ATTEMPTS:
+                    break
+                if deadline is not None and loop.time() + delay >= deadline:
+                    break
+                note(self.client_id, f"signalling connect failed ({reason}), "
+                                     f"retry {attempt}/{SIGNAL_ATTEMPTS - 1} "
+                                     f"in {delay:.1f}s")
+                await asyncio.sleep(delay)
+                continue
+            self.log("signalling connected", f"(attempt {attempt})")
+            return True
+        self.error = f"signalling connect failed: {reason}"
+        note(self.client_id, self.error)
+        return False
+
+    async def connect(self, deadline: float | None = None) -> None:
         self.pc = RTCPeerConnection(self.ice_servers())
 
         # A viewer asks to receive only. Two video transceivers because this model
@@ -281,17 +357,27 @@ class KvsViewer:
 
         # The socket has to exist before the offer is sent, otherwise send() has
         # nowhere to write to and the master never sees an offer at all.
-        async with websockets.connect(url, max_size=2**22, open_timeout=20) as ws:
-            self.ws = ws
-            self.log("signalling connected")
-            await self.pc.setLocalDescription(await self.pc.createOffer())
-            await self.send(
-                "SDP_OFFER",
-                {"type": "offer", "sdp": self.pc.localDescription.sdp},
-            )
-            self.log("offer sent")
+        #
+        # A session outlives its sockets. Everything below used to end the session
+        # on the first hiccup - a handshake that lost a race with DNS, a presigned
+        # URL the service judged stale, a close with no answer - and the relay then
+        # paid for a fresh credential fetch, a fresh ffmpeg and its 5-60 s backoff
+        # before trying again. Redialling here costs a second and keeps everything
+        # that was already working.
+        drops = 0
+        while not self.answered.is_set() and not self.done.is_set():
+            if not await self._open_socket(deadline):
+                return
             try:
+                if self.pc.localDescription is None:
+                    await self.pc.setLocalDescription(await self.pc.createOffer())
+                await self.send(
+                    "SDP_OFFER",
+                    {"type": "offer", "sdp": self.pc.localDescription.sdp},
+                )
+                self.log("offer sent")
                 await self.pump()
+                self.error = "signalling closed by the service"
             except websockets.exceptions.ConnectionClosed as exc:
                 # The service closes with a code for "no master in the channel",
                 # a rejected offer, an expired channel and so on. Catching this is
@@ -301,20 +387,57 @@ class KvsViewer:
                 self.error = (f"signalling closed ({exc.code}"
                               f"{': ' + exc.reason if getattr(exc, 'reason', '') else ''})")
                 note(self.client_id, self.error)
+            except Exception as exc:  # noqa: BLE001 - one bad frame is not a session
+                self.error = f"signalling error: {type(exc).__name__}: {exc}"
+                note(self.client_id, self.error)
+            finally:
+                ws, self.ws = self.ws, None
+                if ws is not None:
+                    try:
+                        await ws.close()
+                    except Exception:  # noqa: BLE001 - closing an already dead socket
+                        pass
+            if self.answered.is_set() or self.done.is_set():
+                # Media is negotiated (or the peer connection died). Signalling has
+                # done its job: the RTP path is peer-to-peer and does not need this
+                # socket, so a drop here no longer tears down a working stream.
+                return
+            drops += 1
+            delay = signal_delay(drops)
+            if drops >= SIGNAL_MAX_DROPS:
+                note(self.client_id, f"signalling dropped {drops} times with no "
+                                     f"answer - ending the session rather than "
+                                     f"redialling again")
+                return
+            if deadline is not None and asyncio.get_event_loop().time() + delay >= deadline:
+                note(self.client_id, "signalling closed and the answer window is "
+                                     "nearly out - not redialling")
+                return
+            note(self.client_id, f"signalling dropped before an answer "
+                                 f"({self.error}); redialling in {delay:.1f}s")
+            await asyncio.sleep(delay)
 
     async def send(self, message_type: str, payload: dict):
         """Send one signalling message.
 
-        The message envelope uses `messageType` (not `action`) and carries the
-        payload as base64 of a JSON object. A viewer must never set
-        recipientClientId - the service rejects it.
+        The envelope is asymmetric, and getting it backwards is silent. Reading
+        `SignalingClient.sendMessage` in AWS's own KVS WebRTC SDK shows what goes
+        on the wire:
+
+            {action: "SDP_OFFER", messagePayload: <base64 JSON>,
+             recipientClientId?: ..., correlationId?: ...}
+
+        `action` is the *outbound* field. `messageType` and `senderClientId` are
+        how the service labels messages coming *back*. A client that sets those
+        instead sends nothing the service can route and gets no error - just an
+        empty frame per message, which is what this client did until the portal's
+        bundled SDK was read closely.
         """
         if self.ws is None:
             return
         msg = {
-            "messageType": message_type,
+            "action": message_type,
             "messagePayload": base64.b64encode(json.dumps(payload).encode()).decode(),
-            "senderClientId": self.client_id,
         }
         await self.ws.send(json.dumps(msg))
 
@@ -466,7 +589,12 @@ class KvsViewer:
         """
         loop = asyncio.get_event_loop()
         started = loop.time()
-        task = asyncio.ensure_future(self.connect())
+        # The redial budget stops here. A camera gets `answer_timeout` to answer,
+        # and retrying a handshake past that point would spend the window on the
+        # connect instead of on the offer it is meant to deliver.
+        window = answer_timeout if answer_timeout is not None else seconds
+        deadline = started + min(window, seconds)
+        task = asyncio.ensure_future(self.connect(deadline))
         finished = asyncio.ensure_future(self.done.wait())
         try:
             while True:
@@ -476,7 +604,13 @@ class KvsViewer:
                 elapsed = loop.time() - started
                 if elapsed >= seconds:
                     break
-                if task.done() or finished.done():
+                if finished.done():
+                    break
+                if task.done() and not self.answered.is_set():
+                    # The connect task gave up without an answer - there is nothing
+                    # left that could deliver media. Once an answer has arrived the
+                    # task finishing means signalling went quiet, not that the peer
+                    # connection died: media keeps flowing, so hold the session.
                     break
                 if (answer_timeout is not None and not self.answered.is_set()
                         and elapsed >= answer_timeout):
